@@ -57,6 +57,28 @@ jobs:
   desktop:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.platform }}
+    # ── Signature de code : facultative, jamais bloquante ────────────────────
+    # Ces variables portent le préfixe SP_ exprès : Tauri ne les lit pas sous
+    # ce nom. Elles servent uniquement aux `if:` ci-dessous, pour savoir si les
+    # secrets ont été configurés. Les étapes « Activer la signature » les
+    # recopient sous leur vrai nom (APPLE_*, AZURE_*) uniquement lorsqu'elles
+    # sont remplies. Sans secrets, le comportement est exactement celui d'avant :
+    # des installeurs non signés, et un build vert.
+    # Voir docs/SIGNING.md pour créer ces secrets.
+    env:
+      CI: true
+      SP_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      SP_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      SP_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      SP_APPLE_ID: ${{ secrets.APPLE_ID }}
+      SP_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      SP_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      SP_AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      SP_AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      SP_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      SP_AZURE_TS_ENDPOINT: ${{ vars.AZURE_TS_ENDPOINT }}
+      SP_AZURE_TS_ACCOUNT: ${{ vars.AZURE_TS_ACCOUNT }}
+      SP_AZURE_TS_PROFILE: ${{ vars.AZURE_TS_PROFILE }}
     strategy:
       fail-fast: false
       matrix:
@@ -113,14 +135,94 @@ jobs:
       - name: Dépendances frontend
         run: npm ci
 
+      # ── Windows : Azure Trusted Signing ────────────────────────────────────
+      - name: Activer la signature Windows
+        if: matrix.platform == 'windows-latest' && env.SP_AZURE_CLIENT_ID != ''
+        shell: pwsh
+        run: |
+          if (-not $env:SP_AZURE_TS_ENDPOINT -or -not $env:SP_AZURE_TS_ACCOUNT -or -not $env:SP_AZURE_TS_PROFILE) {
+            throw "Signature Windows demandée mais les variables AZURE_TS_ENDPOINT / AZURE_TS_ACCOUNT / AZURE_TS_PROFILE ne sont pas définies (Settings > Secrets and variables > Actions > Variables)."
+          }
+
+          # Les identifiants Azure sont lus par trusted-signing-cli.
+          "AZURE_CLIENT_ID=$env:SP_AZURE_CLIENT_ID"     | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "AZURE_CLIENT_SECRET=$env:SP_AZURE_CLIENT_SECRET" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "AZURE_TENANT_ID=$env:SP_AZURE_TENANT_ID"     | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+          cargo install trusted-signing-cli --locked
+
+          # trusted-signing-cli s'appuie sur signtool.exe du Windows SDK.
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if ($signtool) {
+            $signtool.Directory.FullName | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+            Write-Host "signtool : $($signtool.FullName)"
+          } else {
+            Write-Host "::warning::signtool.exe introuvable — la signature risque d'échouer."
+          }
+
+          # `--config` fusionne ce fragment par-dessus tauri.conf.json : le dépôt
+          # reste inchangé, et sans secret la clé signCommand n'existe pas.
+          $cmd = 'trusted-signing-cli -e "{0}" -a "{1}" -c "{2}" %1' -f $env:SP_AZURE_TS_ENDPOINT, $env:SP_AZURE_TS_ACCOUNT, $env:SP_AZURE_TS_PROFILE
+          @{ bundle = @{ windows = @{ signCommand = $cmd } } } | ConvertTo-Json -Depth 6 |
+            Set-Content -Path 'src-tauri\tauri.signing.json' -Encoding utf8
+          Get-Content 'src-tauri\tauri.signing.json' | Write-Host
+          "TAURI_EXTRA_ARGS=--config src-tauri/tauri.signing.json" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "✔ Signature Windows activée"
+
+      # ── macOS : certificat Developer ID + notarisation ──────────────────────
+      - name: Activer la signature macOS
+        if: matrix.platform == 'macos-latest' && env.SP_APPLE_CERTIFICATE != ''
+        shell: bash
+        run: |
+          {
+            printf 'APPLE_CERTIFICATE=%s\n'          "$SP_APPLE_CERTIFICATE"
+            printf 'APPLE_CERTIFICATE_PASSWORD=%s\n' "$SP_APPLE_CERTIFICATE_PASSWORD"
+            printf 'APPLE_SIGNING_IDENTITY=%s\n'     "$SP_APPLE_SIGNING_IDENTITY"
+            printf 'APPLE_ID=%s\n'                   "$SP_APPLE_ID"
+            printf 'APPLE_PASSWORD=%s\n'             "$SP_APPLE_PASSWORD"
+            printf 'APPLE_TEAM_ID=%s\n'              "$SP_APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+          echo "✔ Signature macOS + notarisation activées"
+
       - name: Construire les installeurs
-        run: npx tauri build --bundles ${{ matrix.bundles }} ${{ matrix.args }}
-        env:
-          CI: true
+        run: npx tauri build --bundles ${{ matrix.bundles }} ${{ matrix.args }} ${{ env.TAURI_EXTRA_ARGS }}
 
       - name: Lister les fichiers produits
         shell: bash
         run: find "${{ matrix.bundle }}" -maxdepth 3 -type f | sort
+
+      # Contrôle : si des secrets sont configurés, la signature DOIT être valide.
+      # Sinon on se contente d'afficher l'état, sans faire échouer le build.
+      - name: Vérifier la signature Windows
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem 'src-tauri/target/release' -Recurse -File -Include *.exe, *.msi -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\bundle\\' }
+          if (-not $files) { Write-Host "Aucun installeur à vérifier."; exit 0 }
+          $ko = @()
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            "{0,-52} {1}" -f $f.Name, $s.Status | Write-Host
+            if ($env:SP_AZURE_CLIENT_ID -and $s.Status -ne 'Valid') { $ko += $f.Name }
+          }
+          if ($ko) { throw "Signature absente ou invalide : $($ko -join ', ')" }
+
+      - name: Vérifier la signature macOS
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -o pipefail
+          app=$(find "${{ matrix.bundle }}" -maxdepth 3 -name '*.app' | head -n1)
+          [ -z "$app" ] && { echo "Aucun .app trouvé."; exit 0; }
+          echo "── codesign ──"; codesign -dv --verbose=2 "$app" 2>&1 || true
+          echo "── spctl ──";   spctl -a -vvv -t exec "$app" 2>&1 || true
+          if [ -n "$SP_APPLE_CERTIFICATE" ]; then
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl -a -vvv -t exec "$app"
+            xcrun stapler validate "$app"
+          fi
 
       - name: Publier les installeurs
         uses: actions/upload-artifact@v4
@@ -232,5 +334,19 @@ jobs:
 
             No code signing is applied: on first launch Windows shows SmartScreen
             and macOS needs a right-click → Open.
+
+            ### Check whether a file is signed
+
+            ```powershell
+            Get-AuthenticodeSignature .\SuperPhoto-Windows-x64-setup.exe | Format-List Status, SignerCertificate
+            ```
+
+            ```bash
+            spctl -a -vvv -t exec /Applications/SuperPhoto.app
+            ```
+
+            `Valid` / `accepted` means the build is signed: SmartScreen and
+            Gatekeeper stay quiet. Anything else means it is unsigned — use the
+            workaround above.
           files: release/*
           fail_on_unmatched_files: false

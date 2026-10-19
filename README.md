@@ -36,8 +36,11 @@ One click, always the newest build — the links below point at the latest relea
 | **Web build (static)** | [`superphoto-web.zip`](https://github.com/zigmoon/superphoto/releases/latest/download/superphoto-web.zip) | Upload the contents anywhere |
 
 <sub>Windows SmartScreen and macOS Gatekeeper show a warning on first launch
-because the builds are not code-signed: **More info → Run anyway**, or
-right-click → **Open** on macOS. All releases are on the
+because the builds are not code-signed yet: **More info → Run anyway**, or
+right-click → **Open** on macOS. The signing pipeline is already wired into the
+workflow — see [docs/SIGNING.md](./docs/SIGNING.md) for the two certificates to
+create and the six secrets to add; from then on both warnings disappear. All
+releases are on the
 [releases page](https://github.com/zigmoon/superphoto/releases).</sub>
 
 ### Verify your download
@@ -297,7 +300,19 @@ npm run brand:png      # rasterize the icons, favicon and social card
 | **macOS universal** | `SuperPhoto_<version>_universal.dmg` (Apple Silicon + Intel) |
 | **Release GitHub** | on a `v*` tag: every file above, plus stable names for the README links |
 
-Releasing is just `git tag v0.2.1 && git push origin v0.2.1`.
+Releasing is just `git tag v0.2.2 && git push origin v0.2.2`.
+
+Each install job is **unsigned by default** and becomes signed automatically
+once the signing secrets are set — no workflow edit needed
+([docs/SIGNING.md](./docs/SIGNING.md)):
+
+| Platform | Activated by | Effect |
+| --- | --- | --- |
+| Windows | `AZURE_CLIENT_ID` + `AZURE_TS_*` variables | Authenticode signature (Azure Trusted Signing) |
+| macOS | `APPLE_CERTIFICATE` + the five `APPLE_*` secrets | Developer ID signature + notarisation + stapled ticket |
+
+Without them the build still produces installers, just unsigned: SmartScreen
+shows *More info → Run anyway*, macOS needs right-click → **Open**.
 
 ---
 

@@ -3,6 +3,8 @@ dist/
 .astro/
 src-tauri/target/
 src-tauri/gen/
+# Fragment de config généré en CI quand la signature Windows est active.
+src-tauri/tauri.signing.json
 *.log
 .DS_Store
 Thumbs.db
