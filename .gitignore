@@ -8,3 +8,5 @@ src-tauri/gen/
 Thumbs.db
 .env
 .env.*
+# Archive produite par `npm run build:web:zip` (à envoyer, pas à committer).
+superphoto-web.zip

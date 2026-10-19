@@ -1,0 +1,28 @@
+# SuperPhoto — réglages pour un hébergement Apache (FTP).
+# Sans effet sur le bureau (Tauri) ni sur un serveur qui ignore .htaccess.
+
+DirectoryIndex index.html
+AddDefaultCharset UTF-8
+
+<IfModule mod_mime.c>
+  AddType image/svg+xml .svg
+  AddType image/webp .webp
+  AddType image/avif .avif
+  AddType text/javascript .js
+  AddType application/json .map
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript application/json image/svg+xml
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Les fichiers de assets/ portent une empreinte dans leur nom : on peut les
+  # garder un an. La page, elle, ne doit jamais être servie depuis un cache.
+  <FilesMatch "\.(js|css|png|svg|woff2)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "index\.html$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

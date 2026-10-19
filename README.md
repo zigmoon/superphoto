@@ -156,10 +156,36 @@ Les dialogues **Ouvrir** et **Enregistrer** passent par `tauri-plugin-dialog`. L
 ```bash
 npm install
 npm run dev          # http://localhost:4321
-npm run build        # dist/
-npm run preview
+npm run build        # dist/ (liens absolus : racine de domaine ou bureau)
+npm run build:web    # dist/ (liens relatifs : n'importe quel sous-dossier)
+npm run preview:web  # teste dist/ monté dans /app/ — comme après un envoi FTP
 npm run check        # vérification TypeScript/Astro
 ```
+
+L’application web est **la même page que celle du bureau** : aucun backend n’est requis.
+Quand `isTauri()` est faux, l’ouverture passe par le sélecteur de fichiers du navigateur
+et l’export par un téléchargement (`Blob`). Tout le reste — calques, historique,
+courbes, niveaux, préférences — tourne dans le navigateur.
+
+### Mise en ligne par FTP
+
+`npm run build:web` produit un dossier autonome dont tous les liens sont relatifs
+(`./assets/…`, `./favicon.svg`) : il fonctionne aussi bien à la racine du domaine que
+dans `/app/`, `/superphoto/` ou `/outils/photo/`, sans rien recompiler.
+
+```bash
+npm run build:web:zip                 # dist/ + superphoto-web.zip
+# puis : envoyer le CONTENU de dist/ (pas le dossier lui-même) par FTP
+```
+
+- Le script échoue volontairement si un lien absolu subsiste : un dossier « à moitié
+  relatif » ne peut pas être publié par erreur.
+- `public/.htaccess` est copié dans `dist/` : types MIME (`webp`, `svg`), compression et
+  cache (un an pour les assets hachés, `no-cache` pour `index.html`). Il est ignoré par
+  un serveur qui ne lit pas Apache — aucun réglage n’est nécessaire ailleurs.
+- Mise à jour = relancer `npm run build:web` et réenvoyer le contenu de `dist/`.
+- Base fixe : `node scripts/build-web.mjs --base=/app/` (liens absolus) si le site est
+  servi depuis un sous-dossier définitif (`npm` intercepterait `--base`).
 
 ### Desktop
 
@@ -179,7 +205,7 @@ Le workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) constru
 - **Linux x64** (deb/AppImage) ;
 - **macOS universel** (Apple Silicon + Intel).
 
-Il s’exécute manuellement (`workflow_dispatch`) ou sur un tag `v*`. Les installeurs sont publiés comme artefacts GitHub Actions. Pour l’utiliser, le dossier `superphoto/` doit être à la racine du dépôt publié (ou déplacé dans un dépôt dédié).
+Il s’exécute manuellement (`workflow_dispatch`) ou sur un tag `v*`. Les installeurs sont publiés comme artefacts GitHub Actions. Le dossier `superphoto/` est la racine du dépôt [`zigmoon/superphoto`](https://github.com/zigmoon/superphoto).
 
 ---
 

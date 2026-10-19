@@ -11,7 +11,10 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
+    "build:web": "node scripts/build-web.mjs",
+    "build:web:zip": "node scripts/build-web.mjs --zip",
     "preview": "astro preview",
+    "preview:web": "node scripts/serve-web.mjs",
     "check": "astro check",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
