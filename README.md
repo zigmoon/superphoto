@@ -40,6 +40,29 @@ because the builds are not code-signed: **More info → Run anyway**, or
 right-click → **Open** on macOS. All releases are on the
 [releases page](https://github.com/zigmoon/superphoto/releases).</sub>
 
+### Verify your download
+
+Every release ships a **`SHA256SUMS`** file listing the fingerprint of each
+published file. Check it before running an installer:
+
+```bash
+# Linux
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+```bash
+# macOS — keep only the line of the file you downloaded
+shasum -a 256 -c <(grep SuperPhoto-macOS-universal.dmg SHA256SUMS)
+```
+
+```powershell
+# Windows PowerShell — compare with the matching line in SHA256SUMS
+Get-FileHash .\SuperPhoto-Windows-x64-setup.exe -Algorithm SHA256
+```
+
+A mismatch means the file is incomplete or was tampered with: download it again
+from the [releases page](https://github.com/zigmoon/superphoto/releases).
+
 ---
 
 ## Features
@@ -219,6 +242,14 @@ assets/      brand/
 
 `.htaccess` sets MIME types, compression and cache headers. Preview the exact
 build locally with `npm run preview:web` (served at `http://localhost:8400/app/`).
+
+The build prints the **SHA-256 of the zip**. After the FTP transfer, compare it
+with the file on the server to be sure nothing was truncated:
+
+```bash
+sha256sum superphoto-web.zip        # Linux / macOS
+Get-FileHash .\superphoto-web.zip -Algorithm SHA256   # Windows
+```
 
 ---
 

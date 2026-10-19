@@ -11,6 +11,7 @@
  *   npm run build:web:zip                     (ajoute superphoto-web.zip)
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -132,6 +133,12 @@ if (wantZip) {
   if (zipped.status !== 0) fail('Compression impossible — compressez dist/ à la main.');
   const zipSize = await stat(zipPath).then((s) => s.size);
   step(`superphoto-web.zip : ${(zipSize / 1024).toFixed(1)} Ko`);
+
+  // Empreinte affichée à chaque build : elle permet de vérifier que le fichier
+  // reçu par FTP est intact (comparer avec le `sha256sum` côté serveur).
+  const bytes = await readFile(zipPath);
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  step(`SHA-256 : ${digest}`);
 }
 
 process.stdout.write(

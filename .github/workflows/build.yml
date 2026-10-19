@@ -165,6 +165,26 @@ jobs:
           [ -n "$1" ] && cp "$1" SuperPhoto-Linux-amd64.deb || true
           ls -lh
 
+      # Empreintes : permet de vérifier qu'un fichier téléchargé est bien celui
+      # publié (intégrité). Les noms stables et versionnés sont tous listés, donc
+      # la somme reste valable quel que soit le lien utilisé.
+      - name: Empreintes SHA-256
+        run: |
+          cd release
+          # `SHA256SUMS` ne doit pas se lister lui-même : on le supprime d'abord,
+          # ce qui rend l'étape rejouable sans changer le résultat.
+          rm -f SHA256SUMS
+          sha256sum * | LC_ALL=C sort -k2 > SHA256SUMS
+          echo "── SHA256SUMS ──"
+          cat SHA256SUMS
+
+      - name: Vérifier les empreintes
+        run: |
+          cd release
+          # Recalcule et compare : une somme fausse ne doit jamais être publiée.
+          sha256sum -c SHA256SUMS --quiet
+          echo "✔ $(wc -l < SHA256SUMS) empreintes vérifiées"
+
       - name: Publier la Release
         uses: softprops/action-gh-release@v2
         with:
@@ -185,6 +205,30 @@ jobs:
 
             The versioned files (`SuperPhoto_<version>_*`) are kept alongside the
             stable names used by the README quick-download links.
+
+            ### Verify your download
+
+            `SHA256SUMS` lists the fingerprint of every file below. After
+            downloading, check it before running anything:
+
+            ```bash
+            # Linux
+            sha256sum -c SHA256SUMS --ignore-missing
+            ```
+
+            ```bash
+            # macOS — keep only the line of the file you downloaded
+            shasum -a 256 -c <(grep SuperPhoto-macOS-universal.dmg SHA256SUMS)
+            ```
+
+            ```powershell
+            # Windows PowerShell
+            Get-FileHash .\SuperPhoto-Windows-x64-setup.exe -Algorithm SHA256
+            ```
+
+            Compare the value with the line for that file in `SHA256SUMS`. A
+            mismatch means the download is incomplete or has been tampered with:
+            delete it and download again.
 
             No code signing is applied: on first launch Windows shows SmartScreen
             and macOS needs a right-click → Open.
