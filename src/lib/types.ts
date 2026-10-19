@@ -12,6 +12,7 @@ export type ToolId =
   | 'stamp'
   | 'patch'
   | 'heal'
+  | 'spotlight'
   | 'eyedropper'
   | 'gradient'
   | 'zoom'
@@ -111,14 +112,15 @@ export interface PhotoDoc {
 }
 
 export type Selection =
-  | { type: 'rect'; rect: Rect; invert: boolean }
-  | { type: 'ellipse'; rect: Rect; invert: boolean }
+  | { type: 'rect'; rect: Rect; invert: boolean; feather?: number }
+  | { type: 'ellipse'; rect: Rect; invert: boolean; feather?: number }
   | {
       type: 'poly';
       points: Point[];
       /** Contours supplémentaires (trous) : remplissage pair-impair. */
       rings?: Point[][];
       invert: boolean;
+      feather?: number;
     };
 
 export interface HistoryEntry {

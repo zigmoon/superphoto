@@ -27,7 +27,7 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
   class="theme-light"
   data-theme="light"
   data-theme-mode="light"
-  data-accent="orange"
+  data-accent="ink"
   data-checker="auto"
 >
   <head>
@@ -67,12 +67,15 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
       // Applique le thème avant le premier rendu : aucun flash clair → sombre.
       (() => {
         const root = document.documentElement;
-        const fallback = { theme: 'light', accent: 'orange', checker: 'auto', motion: 'full' };
+        const fallback = { theme: 'light', accent: 'ink', checker: 'auto', motion: 'full' };
         let prefs = fallback;
         try {
           const raw = localStorage.getItem('superphoto:prefs:v1');
           if (raw) prefs = Object.assign({}, fallback, JSON.parse(raw));
         } catch (_) {}
+        // Interface noir et blanc : les anciennes préférences colorées
+        // retombent sur l'encre.
+        prefs.accent = 'ink';
         const systemDark =
           typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
         const dark = prefs.theme === 'dark' || (prefs.theme === 'system' && systemDark);

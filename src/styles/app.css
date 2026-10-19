@@ -36,9 +36,9 @@
   --shadow-toast: 0 14px 34px rgba(20, 20, 24, 0.18);
 
   --scrim: rgba(28, 28, 32, 0.42);
-  --stage-glow: rgba(184, 83, 10, 0.055);
+  --stage-glow: rgba(20, 20, 24, 0.035);
   --stage-grid: rgba(20, 20, 24, 0.045);
-  --hero-glow: rgba(184, 83, 10, 0.09);
+  --hero-glow: rgba(20, 20, 24, 0.05);
 
   --checker-a: #dcdce0;
   --checker-b: #f2f2f4;
@@ -46,7 +46,8 @@
   --scroll-thumb: rgba(20, 20, 24, 0.2);
   --scroll-thumb-hover: rgba(20, 20, 24, 0.32);
 
-  --selection: #0b6fb8;
+  --selection: #ffffff;
+  --selection-ink: #111114;
   --danger: #d64545;
   --success: #17875a;
 
@@ -99,9 +100,9 @@ html.theme-dark {
   --shadow-toast: 0 14px 36px rgba(0, 0, 0, 0.55);
 
   --scrim: rgba(4, 4, 6, 0.78);
-  --stage-glow: rgba(255, 138, 61, 0.045);
+  --stage-glow: rgba(255, 255, 255, 0.02);
   --stage-grid: rgba(255, 255, 255, 0.022);
-  --hero-glow: rgba(255, 138, 61, 0.1);
+  --hero-glow: rgba(255, 255, 255, 0.05);
 
   --checker-a: #35353d;
   --checker-b: #2b2b31;
@@ -109,7 +110,8 @@ html.theme-dark {
   --scroll-thumb: #34343c;
   --scroll-thumb-hover: #45454f;
 
-  --selection: #7fd0ff;
+  --selection: #ffffff;
+  --selection-ink: #111114;
   --danger: #ff5d5d;
   --success: #5ad19a;
 
@@ -123,67 +125,22 @@ html.theme-dark {
   --live: #5ad19a;
 }
 
-/* ── Accents ───────────────────────────────────────────────────────────── */
+/* ── Accents ─────────────────────────────────────────────────────────────
+   Interface noir et blanc : un seul accent, l'encre. En thème sombre, il
+   s'inverse en blanc. Aucune teinte colorée n'entre dans le mobilier. */
 
 :root,
-html[data-accent="orange"] {
-  --accent: #b8530a;
-  --accent-bright: #a14607;
-  --accent-contrast: #ffffff;
-}
-
 html[data-accent="ink"] {
   --accent: #1a1a1a;
   --accent-bright: #000000;
   --accent-contrast: #ffffff;
 }
 
-html[data-accent="blue"] {
-  --accent: #2a6fd0;
-  --accent-bright: #215cb0;
-  --accent-contrast: #ffffff;
-}
-
-html[data-accent="green"] {
-  --accent: #1c7a52;
-  --accent-bright: #156544;
-  --accent-contrast: #ffffff;
-}
-
-html[data-accent="rose"] {
-  --accent: #c23f6e;
-  --accent-bright: #a83360;
-  --accent-contrast: #ffffff;
-}
-
-html.theme-dark[data-accent="orange"] {
-  --accent: #ff8a3d;
-  --accent-bright: #ffa565;
-  --accent-contrast: #1b1007;
-}
-
+html.theme-dark,
 html.theme-dark[data-accent="ink"] {
   --accent: #f0f0f2;
   --accent-bright: #ffffff;
   --accent-contrast: #121214;
-}
-
-html.theme-dark[data-accent="blue"] {
-  --accent: #6ea8ff;
-  --accent-bright: #8db9ff;
-  --accent-contrast: #0a1220;
-}
-
-html.theme-dark[data-accent="green"] {
-  --accent: #4fd1a1;
-  --accent-bright: #6ee0b6;
-  --accent-contrast: #04140d;
-}
-
-html.theme-dark[data-accent="rose"] {
-  --accent: #ff7aa8;
-  --accent-bright: #ff96bb;
-  --accent-contrast: #200a12;
 }
 
 :root {
@@ -233,7 +190,7 @@ body {
   background: var(--bg-base);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 13.5px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   user-select: none;
@@ -442,7 +399,7 @@ html.theme-dark .brand-mark {
 .tb-btn {
   gap: 6px;
   padding: 0 9px;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
 }
@@ -543,14 +500,14 @@ html.theme-dark .theme-toggle .theme-icon-moon {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
 
 .doc-meta {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   color: var(--text-faint);
   letter-spacing: 0.05em;
   white-space: nowrap;
@@ -688,7 +645,7 @@ html.theme-dark .stage-zoom {
   background: transparent;
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;
 }
@@ -753,7 +710,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 .eyebrow {
   display: block;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.24em;
@@ -762,14 +719,14 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .sidebar-head h2 {
   margin-top: 3px;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
 }
 
 .shortcut-hint {
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   color: var(--text-faint);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -830,7 +787,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   margin: auto;
   padding: 22px 10px;
   text-align: center;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--text-faint);
 }
@@ -948,14 +905,14 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--text);
 }
 
 .layer-kind {
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--text-faint);
   white-space: nowrap;
@@ -988,7 +945,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   border-radius: 6px;
   background: transparent;
   color: var(--text-dim);
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-weight: 500;
   transition: background-color 120ms var(--ease), color 120ms var(--ease), border-color 120ms var(--ease);
 }
@@ -1042,7 +999,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .mask-hint {
   margin: 0;
-  font-size: 9.5px;
+  font-size: 11.5px;
   line-height: 1.5;
   color: var(--text-faint);
 }
@@ -1051,7 +1008,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 9.5px;
+  font-size: 11.5px;
   color: var(--text-dim);
   cursor: pointer;
 }
@@ -1082,10 +1039,10 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .section-title {
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.18em;
   color: var(--text-faint);
   margin-bottom: 10px;
 }
@@ -1094,7 +1051,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   display: block;
   margin: 10px 0 5px;
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -1113,7 +1070,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   border-radius: 6px;
   background: var(--field-bg);
   color: var(--text);
-  font-size: 11px;
+  font-size: 12.5px;
   transition: border-color 120ms var(--ease), background-color 120ms var(--ease);
 }
 
@@ -1148,13 +1105,13 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   align-items: center;
   gap: 4px 8px;
   margin: 9px 0;
-  font-size: 9.5px;
+  font-size: 11.5px;
   color: var(--text-dim);
 }
 
 .range-field output {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   color: var(--accent);
   text-align: right;
   white-space: nowrap;
@@ -1224,13 +1181,13 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   justify-content: space-between;
   gap: 8px;
   padding: 3px 0;
-  font-size: 9.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
 }
 
 .doc-row strong {
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-dim);
 }
@@ -1240,7 +1197,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   padding-top: 8px;
   border-top: 1px solid var(--line-soft);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   color: var(--text-faint);
   letter-spacing: 0.03em;
 }
@@ -1295,7 +1252,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 }
 
 .tool-card span {
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-weight: 500;
   letter-spacing: 0.01em;
   overflow: hidden;
@@ -1305,7 +1262,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .tool-card kbd {
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 10.5px;
   font-weight: 500;
   color: var(--text-faint);
   border: 1px solid var(--line);
@@ -1356,7 +1313,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   background: transparent;
   color: var(--text-dim);
   text-align: left;
-  font-size: 10px;
+  font-size: 12px;
   transition: background-color 110ms var(--ease), color 110ms var(--ease), border-color 110ms var(--ease);
 }
 
@@ -1391,7 +1348,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 }
 
 .options-head h3 {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: 0.01em;
 }
@@ -1404,7 +1361,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .options-hint {
   margin: 0;
-  font-size: 9.5px;
+  font-size: 11.5px;
   line-height: 1.6;
   color: var(--text-faint);
 }
@@ -1418,7 +1375,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   border-radius: 8px;
   text-align: center;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .option-card {
@@ -1433,19 +1390,19 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .option-card-label {
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 10.5px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
 
 .option-card strong {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .option-card-sub {
-  font-size: 8.5px;
+  font-size: 11px;
   color: var(--text-faint);
 }
 
@@ -1467,7 +1424,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   border-radius: 4px;
   background: transparent;
   color: var(--text-faint);
-  font-size: 9px;
+  font-size: 11.5px;
   font-weight: 500;
   white-space: nowrap;
   transition: background-color 100ms var(--ease), color 100ms var(--ease);
@@ -1515,7 +1472,7 @@ html.theme-dark .segmented button.is-active {
   border-radius: 6px;
   background: transparent;
   color: var(--text);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -1561,14 +1518,14 @@ html.theme-dark .segmented button.is-active {
 .btn.sm {
   height: 27px;
   padding: 0 8px;
-  font-size: 9px;
+  font-size: 11.5px;
   border-radius: 5px;
 }
 
 .btn.lg {
   height: 38px;
   padding: 0 16px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   border-radius: 7px;
 }
 
@@ -1588,7 +1545,7 @@ html.theme-dark .segmented button.is-active {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--bg-sunken);
-  font-size: 9px;
+  font-size: 11.5px;
   color: var(--text-faint);
 }
 
@@ -1612,7 +1569,7 @@ html.theme-dark .segmented button.is-active {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 9.5px;
+  font-size: 11.5px;
   color: var(--text-dim);
   cursor: pointer;
 }
@@ -1647,7 +1604,7 @@ html.theme-dark .segmented button.is-active {
   border-radius: 5px;
   background: var(--field-bg);
   color: var(--text);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .field-label textarea {
@@ -1673,7 +1630,7 @@ html.theme-dark .segmented button.is-active {
   border: 1px solid var(--line);
   border-radius: 6px;
   background:
-    linear-gradient(90deg, var(--fg, #ff8a3d), var(--bg, #111114)),
+    linear-gradient(90deg, var(--fg, #111114), var(--bg, #ffffff)),
     repeating-conic-gradient(var(--checker-a) 0% 25%, var(--checker-b) 0% 50%) 0 0 / 10px 10px;
 }
 
@@ -1702,12 +1659,12 @@ html.theme-dark .segmented button.is-active {
 
 .swatch-preview strong {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12.5px;
   letter-spacing: 0.04em;
 }
 
 .swatch-preview span {
-  font-size: 8.5px;
+  font-size: 11px;
   color: var(--text-faint);
 }
 
@@ -1723,7 +1680,7 @@ html.theme-dark .segmented button.is-active {
   align-items: center;
   gap: 6px;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--live);
@@ -1823,14 +1780,14 @@ html.theme-dark .segmented button.is-active {
 
 .ribbon-label {
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 10.5px;
   letter-spacing: 0.22em;
   color: var(--accent);
   flex: none;
 }
 
 .ribbon-hint {
-  font-size: 9.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1898,7 +1855,17 @@ html.theme-dark .segmented button.is-active {
   stroke: var(--selection);
   stroke-width: 1.4;
   stroke-dasharray: 5 4;
-  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--selection) 50%, transparent));
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9));
+}
+
+/* Bande du contour progressif : même géométrie, épaisseur = rayon. */
+.selection-feather {
+  fill: none;
+  stroke: var(--selection);
+  opacity: 0.22;
+  stroke-linejoin: round;
+  filter: blur(1.5px) drop-shadow(0 0 1px rgba(0, 0, 0, 0.7));
+  pointer-events: none;
 }
 
 .selection-preview {
@@ -1906,6 +1873,7 @@ html.theme-dark .segmented button.is-active {
   stroke: var(--selection);
   stroke-width: 1.4;
   stroke-dasharray: 4 3;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.8));
 }
 
 .crop-outline {
@@ -1947,27 +1915,30 @@ html.theme-dark .segmented button.is-active {
   stroke: var(--selection);
   stroke-width: 1.4;
   stroke-dasharray: 4 3;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.85));
 }
 
 .path-handle-line {
-  stroke: color-mix(in srgb, var(--selection) 55%, transparent);
+  stroke: color-mix(in srgb, var(--selection) 65%, transparent);
   stroke-width: 1;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.8));
 }
 
 .path-handle {
   fill: var(--selection);
-  stroke: var(--bg-surface);
+  stroke: var(--selection-ink);
   stroke-width: 1.4;
 }
 
 .path-anchor {
-  fill: var(--bg-surface);
+  fill: var(--selection-ink);
   stroke: var(--selection);
   stroke-width: 1.5;
 }
 
 .path-anchor.is-selected {
   fill: var(--selection);
+  stroke: var(--selection-ink);
 }
 
 .text-bounds {
@@ -1975,6 +1946,100 @@ html.theme-dark .segmented button.is-active {
   stroke: var(--bounds-line);
   stroke-width: 1;
   stroke-dasharray: 3 3;
+}
+
+/* Aperçu du point lumineux : écran + contour, sobre, sans couleur. */
+.spot-preview {
+  mix-blend-mode: screen;
+}
+
+.spot-outline {
+  fill: none;
+  stroke: var(--selection);
+  stroke-width: 1.2;
+  stroke-dasharray: 6 5;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.85));
+}
+
+/* ── Menu contextuel de la toile ───────────────────────────────────────── */
+
+.canvas-menu {
+  position: fixed;
+  z-index: 140;
+  min-width: 236px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-dialog);
+  color: var(--text);
+  animation: menu-in 110ms var(--ease);
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+.canvas-menu-head {
+  padding: 6px 9px 7px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.canvas-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-height: 31px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.canvas-menu-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-menu-item kbd {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.canvas-menu-item:hover:not(:disabled),
+.canvas-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.canvas-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.canvas-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line-soft);
 }
 
 /* ── Empty state ───────────────────────────────────────────────────────── */
@@ -2011,7 +2076,7 @@ html.theme-dark .segmented button.is-active {
 
 .empty-kicker {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   letter-spacing: 0.28em;
   color: var(--accent);
   margin-bottom: 12px;
@@ -2028,7 +2093,7 @@ html.theme-dark .segmented button.is-active {
 
 .empty-state p {
   max-width: 560px;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.7;
   color: var(--text-dim);
   margin-bottom: 26px;
@@ -2047,7 +2112,7 @@ html.theme-dark .segmented button.is-active {
   align-items: center;
   gap: 10px;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -2072,7 +2137,7 @@ html.theme-dark .segmented button.is-active {
   background: var(--bg-surface);
   border-top: 1px solid var(--line-soft);
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   letter-spacing: 0.02em;
   color: var(--text-faint);
   overflow: hidden;
@@ -2219,7 +2284,7 @@ html.theme-dark .segmented button.is-active {
   align-items: center;
   gap: 8px;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.28em;
   color: var(--accent);
@@ -2249,7 +2314,7 @@ html.theme-dark .segmented button.is-active {
 .dialog-head p {
   margin-top: 6px;
   max-width: 560px;
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.55;
   color: var(--text-dim);
 }
@@ -2306,7 +2371,7 @@ html.theme-dark .segmented button.is-active {
 
 .pane-label {
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.2em;
@@ -2368,7 +2433,7 @@ html.theme-dark .segmented button.is-active {
 }
 
 .preset-card strong {
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-weight: 550;
   color: var(--text-dim);
   overflow: hidden;
@@ -2378,7 +2443,7 @@ html.theme-dark .segmented button.is-active {
 
 .preset-card small {
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -2411,7 +2476,7 @@ html.theme-dark .segmented button.is-active {
   padding: 8px 9px;
   border: 1px dashed var(--line);
   border-radius: 6px;
-  font-size: 8.5px;
+  font-size: 11px;
   line-height: 1.55;
   color: var(--text-faint);
 }
@@ -2440,7 +2505,7 @@ html.theme-dark .segmented button.is-active {
   gap: 5px;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -2460,7 +2525,7 @@ html.theme-dark .segmented button.is-active {
   background: var(--field-bg);
   color: var(--text);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.02em;
 }
 
@@ -2481,7 +2546,7 @@ html.theme-dark .segmented button.is-active {
   transform: translateY(-50%);
   font-family: var(--mono);
   font-style: normal;
-  font-size: 8px;
+  font-size: 11px;
   color: var(--text-faint);
   pointer-events: none;
 }
@@ -2497,7 +2562,7 @@ html.theme-dark .segmented button.is-active {
   border-radius: 6px;
   background: transparent;
   color: var(--text-faint);
-  font-size: 9px;
+  font-size: 11.5px;
 }
 
 .ratio-lock svg {
@@ -2548,7 +2613,7 @@ html.theme-dark .segmented button.is-active {
 
 .new-preview-label {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 11px;
   color: var(--text-faint);
 }
 
@@ -2571,12 +2636,12 @@ html.theme-dark .segmented button.is-active {
 }
 
 .format-card strong {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .format-card span {
-  font-size: 8px;
+  font-size: 11px;
   color: var(--text-faint);
   line-height: 1.4;
 }
@@ -2614,7 +2679,7 @@ html.theme-dark .segmented button.is-active {
 
 .export-summary span {
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-faint);
@@ -2622,13 +2687,13 @@ html.theme-dark .segmented button.is-active {
 
 .export-summary strong {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-dim);
 }
 
 .dialog-note {
-  font-size: 8.5px;
+  font-size: 11px;
   line-height: 1.55;
   color: var(--text-faint);
 }
@@ -2715,7 +2780,7 @@ html.theme-dark .segmented button.is-active {
   background: transparent;
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 11.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2753,16 +2818,16 @@ html.theme-dark .segmented button.is-active {
 
 .prefs-section-title {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.13em;
   color: var(--text-dim);
 }
 
 .prefs-section-hint {
   margin-top: 4px;
-  font-size: 9.5px;
+  font-size: 11.5px;
   line-height: 1.55;
   color: var(--text-faint);
 }
@@ -2789,7 +2854,7 @@ html.theme-dark .segmented button.is-active {
   border-radius: 7px;
   background: var(--bg-surface);
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   transition: background-color 110ms var(--ease), border-color 110ms var(--ease), color 110ms var(--ease);
 }
@@ -2816,47 +2881,6 @@ html.theme-dark .segmented button.is-active {
   color: var(--accent);
 }
 
-.accent-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.accent-dot {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--bg-surface);
-}
-
-.accent-dot i {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: block;
-}
-
-.accent-dot[data-value="orange"] i { background: #e2701a; }
-.accent-dot[data-value="ink"] i { background: #1a1a1a; }
-.accent-dot[data-value="blue"] i { background: #2a6fd0; }
-.accent-dot[data-value="green"] i { background: #1c7a52; }
-.accent-dot[data-value="rose"] i { background: #c23f6e; }
-
-.accent-dot:hover {
-  border-color: var(--line-strong);
-  background: var(--bg-raised);
-}
-
-.accent-dot.is-active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
 .prefs-switch {
   display: flex;
   align-items: center;
@@ -2879,12 +2903,12 @@ html.theme-dark .segmented button.is-active {
 }
 
 .prefs-switch strong {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 550;
 }
 
 .prefs-switch small {
-  font-size: 8.5px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--text-faint);
 }
@@ -2936,7 +2960,7 @@ html.theme-dark .segmented button.is-active {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 9.5px;
+  font-size: 11.5px;
   color: var(--text-dim);
 }
 
@@ -2949,7 +2973,7 @@ html.theme-dark .segmented button.is-active {
   background: var(--bg-surface);
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   text-align: center;
   white-space: nowrap;
 }
@@ -2984,7 +3008,7 @@ html.theme-dark .segmented button.is-active {
 
 .about-brand strong {
   display: block;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 800;
   letter-spacing: 0.14em;
 }
@@ -2993,14 +3017,14 @@ html.theme-dark .segmented button.is-active {
   display: block;
   margin-top: 3px;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.16em;
   color: var(--text-faint);
 }
 
 .about-card p {
   margin-top: 12px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.65;
   color: var(--text-dim);
 }
@@ -3010,7 +3034,7 @@ html.theme-dark .segmented button.is-active {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 5px 16px;
   margin-top: 9px;
-  font-size: 9.5px;
+  font-size: 11.5px;
 }
 
 .about-grid span {
@@ -3050,7 +3074,7 @@ html.theme-dark .segmented button.is-active {
   border-radius: 7px;
   background: var(--toast-bg);
   color: var(--toast-text);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
   box-shadow: var(--shadow-toast);
   animation: toast-in 180ms var(--ease) both;
@@ -3130,7 +3154,7 @@ html.theme-dark .segmented button.is-active {
   }
 
   .tool-card span {
-    font-size: 9px;
+    font-size: 11.5px;
   }
 
   .canvas-pad {

@@ -149,6 +149,196 @@ export function selectionRings(selection: Selection): Point[][] {
   return selection.rings && selection.rings.length > 0 ? selection.rings : [selection.points];
 }
 
+/** Rayon du contour progressif, en pixels du document. */
+export function selectionFeather(selection: Selection): number {
+  return Math.max(0, Math.round(selection.feather ?? 0));
+}
+
+/**
+ * Géométrie d'une sélection sous forme de `Path2D`. Pour une sélection
+ * inversée, le rectangle extérieur est ajouté au chemin : il suffit ensuite de
+ * remplir en pair-impair.
+ */
+export function selectionPath(
+  selection: Selection,
+  width: number,
+  height: number,
+): { path: Path2D; rule: CanvasFillRule } {
+  const path = new Path2D();
+  let rule: CanvasFillRule = 'nonzero';
+  if (selection.type === 'rect') {
+    path.rect(selection.rect.x, selection.rect.y, selection.rect.w, selection.rect.h);
+  } else if (selection.type === 'ellipse') {
+    path.ellipse(
+      selection.rect.x + selection.rect.w / 2,
+      selection.rect.y + selection.rect.h / 2,
+      Math.max(0.1, selection.rect.w / 2),
+      Math.max(0.1, selection.rect.h / 2),
+      0,
+      0,
+      Math.PI * 2,
+    );
+  } else {
+    const rings = selectionRings(selection);
+    for (const ring of rings) {
+      const first = ring[0];
+      if (!first) continue;
+      path.moveTo(first.x, first.y);
+      for (let i = 1; i < ring.length; i += 1) {
+        const point = ring[i];
+        if (point) path.lineTo(point.x, point.y);
+      }
+      path.closePath();
+    }
+    if (rings.length > 1) rule = 'evenodd';
+  }
+  if (selection.invert) {
+    const outer = new Path2D();
+    outer.rect(0, 0, width, height);
+    outer.addPath(path);
+    return { path: outer, rule: 'evenodd' };
+  }
+  return { path, rule };
+}
+
+export interface SelectionMask {
+  /** Blanc + alpha : la couverture, utilisable avec `destination-in`. */
+  canvas: HTMLCanvasElement;
+  /** Couverture 0 → 255 par pixel, pour les réglages qui lisent des ImageData. */
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+  feather: number;
+}
+
+let canvasFilterSupport: boolean | null = null;
+
+function supportsCanvasFilter(): boolean {
+  if (canvasFilterSupport !== null) return canvasFilterSupport;
+  const probe = document.createElement('canvas');
+  probe.width = 2;
+  probe.height = 2;
+  const ctx = probe.getContext('2d');
+  if (!ctx) return (canvasFilterSupport = false);
+  ctx.filter = 'blur(1px)';
+  canvasFilterSupport = ctx.filter !== 'none';
+  return canvasFilterSupport;
+}
+
+function boxBlurAlpha(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const alpha = new Uint8ClampedArray(width * height);
+  for (let i = 0; i < alpha.length; i += 1) alpha[i] = data[i * 4 + 3] ?? 0;
+  const temp = new Uint8ClampedArray(alpha.length);
+  const span = radius * 2 + 1;
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      let sum = 0;
+      for (let x = -radius; x <= radius; x += 1) {
+        sum += alpha[row + clamp(x, 0, width - 1)] ?? 0;
+      }
+      for (let x = 0; x < width; x += 1) {
+        temp[row + x] = sum / span;
+        sum +=
+          (alpha[row + clamp(x + radius + 1, 0, width - 1)] ?? 0) -
+          (alpha[row + clamp(x - radius, 0, width - 1)] ?? 0);
+      }
+    }
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      for (let y = -radius; y <= radius; y += 1) {
+        sum += temp[clamp(y, 0, height - 1) * width + x] ?? 0;
+      }
+      for (let y = 0; y < height; y += 1) {
+        alpha[y * width + x] = sum / span;
+        sum +=
+          (temp[clamp(y + radius + 1, 0, height - 1) * width + x] ?? 0) -
+          (temp[clamp(y - radius, 0, height - 1) * width + x] ?? 0);
+      }
+    }
+  }
+  for (let i = 0; i < alpha.length; i += 1) data[i * 4 + 3] = alpha[i] ?? 0;
+}
+
+/**
+ * Construit le masque de contour progressif d'une sélection : blanc opaque au
+ * centre, dégradé sur `feather` pixels. Renvoie `null` quand la sélection est
+ * nette (aucun travail supplémentaire n'est alors nécessaire).
+ */
+export function buildSelectionMask(
+  selection: Selection,
+  width: number,
+  height: number,
+): SelectionMask | null {
+  const feather = selectionFeather(selection);
+  if (feather <= 0 || width < 1 || height < 1) return null;
+
+  const base = createCanvas(width, height);
+  const baseCtx = canvasContext(base);
+  const geometry = selectionPath({ ...selection, invert: false }, width, height);
+  baseCtx.fillStyle = '#ffffff';
+  baseCtx.fill(geometry.path, geometry.rule);
+
+  const canvas = createCanvas(width, height);
+  const ctx = canvasContext(canvas);
+  if (supportsCanvasFilter()) {
+    ctx.filter = `blur(${feather / 2}px)`;
+    ctx.drawImage(base, 0, 0);
+    ctx.filter = 'none';
+  } else {
+    ctx.drawImage(base, 0, 0);
+    const image = ctx.getImageData(0, 0, width, height);
+    boxBlurAlpha(image.data, width, height, Math.max(1, Math.round(feather / 3)));
+    ctx.putImageData(image, 0, 0);
+  }
+
+  let image = ctx.getImageData(0, 0, width, height);
+  if (selection.invert) {
+    for (let i = 3; i < image.data.length; i += 4) {
+      image.data[i] = 255 - (image.data[i] ?? 0);
+    }
+    ctx.putImageData(image, 0, 0);
+    image = ctx.getImageData(0, 0, width, height);
+  }
+
+  const data = new Uint8ClampedArray(width * height);
+  for (let i = 0; i < data.length; i += 1) data[i] = image.data[i * 4 + 3] ?? 0;
+  return { canvas, data, width, height, feather };
+}
+
+/**
+ * Recombine `before` et `after` à travers un masque : `after * m + before * (1 - m)`.
+ * L'addition du canvas (`lighter`) travaille en couleurs prémultipliées, ce qui
+ * donne exactement le mélange attendu, y compris pour une gomme.
+ */
+export function blendThroughMask(
+  before: HTMLCanvasElement,
+  after: HTMLCanvasElement,
+  mask: HTMLCanvasElement,
+): HTMLCanvasElement {
+  const maskedAfter = cloneCanvas(after);
+  const afterCtx = canvasContext(maskedAfter);
+  afterCtx.globalCompositeOperation = 'destination-in';
+  afterCtx.drawImage(mask, 0, 0, after.width, after.height);
+
+  const maskedBefore = cloneCanvas(before);
+  const beforeCtx = canvasContext(maskedBefore);
+  beforeCtx.globalCompositeOperation = 'destination-out';
+  beforeCtx.drawImage(mask, 0, 0, after.width, after.height);
+
+  const output = createCanvas(after.width, after.height);
+  const ctx = canvasContext(output);
+  ctx.drawImage(maskedAfter, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(maskedBefore, 0, 0);
+  return output;
+}
+
 export function canvasToBlob(
   canvas: HTMLCanvasElement,
   type: string,

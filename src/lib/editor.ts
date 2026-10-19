@@ -85,6 +85,8 @@ import type {
 import {
   canvasContext,
   canvasToBlob,
+  blendThroughMask,
+  buildSelectionMask,
   clamp,
   cloneCanvas,
   createCanvas,
@@ -92,8 +94,12 @@ import {
   normalizeRect,
   rgbToHex,
   selectionBounds,
+  selectionContains,
+  selectionFeather,
+  selectionPath,
   selectionRings,
   withAlpha,
+  type SelectionMask,
 } from './utils';
 
 type DragState =
@@ -117,6 +123,7 @@ type DragState =
     }
   | { kind: 'patch-region'; start: Point; current: Point }
   | { kind: 'patch-move'; start: Point; current: Point }
+  | { kind: 'spotlight'; start: Point; current: Point }
   | {
       kind: 'move';
       layerId: string;
@@ -199,6 +206,12 @@ const TOOLS: Record<ToolId, ToolInfo> = {
     shortcut: 'K',
     cursor: 'crosshair',
     hint: 'Peignez sur une petite tache : le voisinage est ramené dessus.',
+  },
+  spotlight: {
+    label: 'Point lumineux',
+    shortcut: 'L',
+    cursor: 'crosshair',
+    hint: 'Cliquez pour éclairer une zone, glissez depuis le centre pour régler son rayon.',
   },
   crop: {
     label: 'Recadrage',
@@ -319,10 +332,12 @@ function stripExtension(name: string): string {
 }
 
 function scaleSelection(selection: Selection, scale: number): Selection {
+  const feather = selection.feather ? Math.max(0, selection.feather * scale) : undefined;
   if (selection.type === 'poly') {
     return {
       ...selection,
       points: selection.points.map((point) => ({ x: point.x * scale, y: point.y * scale })),
+      feather,
     };
   }
   return {
@@ -333,6 +348,7 @@ function scaleSelection(selection: Selection, scale: number): Selection {
       w: selection.rect.w * scale,
       h: selection.rect.h * scale,
     },
+    feather,
   };
 }
 
@@ -345,7 +361,9 @@ export class SuperPhotoEditor {
   private activeTool: ToolId = 'select';
   private zoom = 1;
   private fitMode = true;
-  private selection: Selection | null = null;
+  private selectionState: Selection | null = null;
+  private selectionMaskCache: { key: string; mask: SelectionMask } | null = null;
+  private adjustmentMaskCache: { key: string; data: Uint8ClampedArray } | null = null;
   private pendingCrop: Rect | null = null;
   private drag: DragState | null = null;
   private adjustment: AdjustmentState | null = null;
@@ -364,18 +382,34 @@ export class SuperPhotoEditor {
   private preferences: Preferences = loadPreferences();
   private preferencesSnapshot: Preferences | null = null;
 
+  /**
+   * La sélection invalide ses caches de contour progressif dès qu'elle change :
+   * le masque flou n'est calculé qu'une fois par sélection.
+   */
+  private get selection(): Selection | null {
+    return this.selectionState;
+  }
+
+  private set selection(value: Selection | null) {
+    if (value !== this.selectionState) {
+      this.selectionState = value;
+      this.selectionMaskCache = null;
+      this.adjustmentMaskCache = null;
+    }
+  }
+
   /** Cache des nœuds chauds : zéro getElementById pendant les gestes. */
   private readonly nodes = new Map<string, HTMLElement>();
   private readonly statusCache = new Map<string, string>();
   private readonly layerRows = new Map<string, HTMLElement>();
   private layerOrderSignature = '';
 
-  private primaryColor = '#ff8a3d';
-  private secondaryColor = '#111114';
+  private primaryColor = '#111114';
+  private secondaryColor = '#ffffff';
 
   private shapeOptions: ShapeOptions = {
     type: 'rectangle',
-    fill: '#ff8a3d',
+    fill: '#111114',
     stroke: '#ffffff',
     strokeWidth: 0,
     radius: 16,
@@ -391,7 +425,7 @@ export class SuperPhotoEditor {
 
   private pathOptions = {
     fill: 'none',
-    stroke: '#ff8a3d',
+    stroke: '#111114',
     strokeWidth: 3,
   };
 
@@ -409,6 +443,9 @@ export class SuperPhotoEditor {
   private pencilOptions = { size: 3, opacity: 1 };
   private wand: WandSettings = { tolerance: 32, contiguous: true, merged: false };
   private patchOptions: PatchSettings = { corrector: true };
+  private selectionFeather = 0;
+  private spotlight = { diameter: 420, intensity: 55, softness: 60 };
+  private canvasMenu: HTMLElement | null = null;
   private stampSource: Point | null = null;
   private patchSourceRect: Rect | null = null;
   private autosaveTimer = 0;
@@ -467,6 +504,7 @@ export class SuperPhotoEditor {
     this.bindToolRail();
     this.bindLayersPanel();
     this.bindCanvas();
+    this.bindCanvasMenu();
     this.bindNewDocumentDialog();
     this.bindResizeDialog();
     this.bindExportDialog();
@@ -749,6 +787,7 @@ export class SuperPhotoEditor {
       Boolean(this.drag) ||
       Boolean(this.pendingCrop) ||
       Boolean(this.patchSourceRect) ||
+      (this.activeTool === 'spotlight' && this.pointerInside) ||
       (this.activeTool === 'pen' && Boolean(activePath?.path?.anchors.length)) ||
       (this.activeTool === 'text' && Boolean(activeText?.text?.bounds));
     if (!hasOverlay && this.overlay.childElementCount === 0) return;
@@ -768,44 +807,52 @@ export class SuperPhotoEditor {
 
     const selection = this.selection;
     if (selection) {
-      if (selection.type === 'rect') {
-        add('rect', {
-          x: selection.rect.x,
-          y: selection.rect.y,
-          width: selection.rect.w,
-          height: selection.rect.h,
-          class: 'selection-outline',
-          'vector-effect': 'non-scaling-stroke',
-        });
-      } else if (selection.type === 'ellipse') {
-        add('ellipse', {
-          cx: selection.rect.x + selection.rect.w / 2,
-          cy: selection.rect.y + selection.rect.h / 2,
-          rx: selection.rect.w / 2,
-          ry: selection.rect.h / 2,
-          class: 'selection-outline',
-          'vector-effect': 'non-scaling-stroke',
-        });
-      } else {
-        const rings = selectionRings(selection);
-        if (rings.length > 1) {
-          add('path', {
-            d: rings
-              .map((ring) => `M ${ring.map((p) => `${p.x} ${p.y}`).join(' L ')} Z`)
-              .join(' '),
-            class: 'selection-outline',
-            'fill-rule': 'evenodd',
-            'vector-effect': 'non-scaling-stroke',
+      const drawOutline = (className: string, attrs: Record<string, string | number> = {}) => {
+        if (selection.type === 'rect') {
+          add('rect', {
+            x: selection.rect.x,
+            y: selection.rect.y,
+            width: selection.rect.w,
+            height: selection.rect.h,
+            class: className,
+            ...attrs,
+          });
+        } else if (selection.type === 'ellipse') {
+          add('ellipse', {
+            cx: selection.rect.x + selection.rect.w / 2,
+            cy: selection.rect.y + selection.rect.h / 2,
+            rx: selection.rect.w / 2,
+            ry: selection.rect.h / 2,
+            class: className,
+            ...attrs,
           });
         } else {
-          const ring = rings[0] ?? selection.points;
-          add('polygon', {
-            points: ring.map((p) => `${p.x},${p.y}`).join(' '),
-            class: 'selection-outline',
-            'vector-effect': 'non-scaling-stroke',
-          });
+          const rings = selectionRings(selection);
+          if (rings.length > 1) {
+            add('path', {
+              d: rings
+                .map((ring) => `M ${ring.map((p) => `${p.x} ${p.y}`).join(' L ')} Z`)
+                .join(' '),
+              class: className,
+              'fill-rule': 'evenodd',
+              ...attrs,
+            });
+          } else {
+            const ring = rings[0] ?? selection.points;
+            add('polygon', {
+              points: ring.map((p) => `${p.x},${p.y}`).join(' '),
+              class: className,
+              ...attrs,
+            });
+          }
         }
+      };
+      const feather = selectionFeather(selection);
+      if (feather > 0) {
+        // Bande translucide : montre l'étendue exacte du dégradé.
+        drawOutline('selection-feather', { 'stroke-width': feather * 2 });
       }
+      drawOutline('selection-outline', { 'vector-effect': 'non-scaling-stroke' });
     }
 
     const patchDrag = this.drag?.kind === 'patch-move' ? this.drag : null;
@@ -922,6 +969,50 @@ export class SuperPhotoEditor {
         cy: drag.current.y,
         r: 5 / this.zoom,
         class: 'gradient-handle',
+        'vector-effect': 'non-scaling-stroke',
+      });
+    }
+
+    const spot = drag?.kind === 'spotlight'
+      ? {
+          center: drag.start,
+          radius: Math.max(8, Math.hypot(drag.current.x - drag.start.x, drag.current.y - drag.start.y)),
+        }
+      : this.activeTool === 'spotlight' && this.pointerInside
+        ? { center: this.pointer, radius: Math.max(8, this.spotlight.diameter / 2) }
+        : null;
+    if (spot) {
+      const amount = clamp(this.spotlight.intensity / 100, 0, 1);
+      const inner = 1 - clamp(this.spotlight.softness / 100, 0, 1);
+      const gradientId = 'spot-preview-gradient';
+      const defs = add('defs', {});
+      const gradient = document.createElementNS(ns, 'radialGradient');
+      gradient.setAttribute('id', gradientId);
+      for (const [offset, opacity] of [
+        [0, 0.85],
+        [inner, 0.6],
+        [1, 0],
+      ] as const) {
+        const stop = document.createElementNS(ns, 'stop');
+        stop.setAttribute('offset', String(offset));
+        stop.setAttribute('stop-color', '#ffffff');
+        stop.setAttribute('stop-opacity', String(opacity * amount));
+        gradient.appendChild(stop);
+      }
+      defs.appendChild(gradient);
+      add('circle', {
+        cx: spot.center.x,
+        cy: spot.center.y,
+        r: spot.radius,
+        fill: `url(#${gradientId})`,
+        class: 'spot-preview',
+        'pointer-events': 'none',
+      });
+      add('circle', {
+        cx: spot.center.x,
+        cy: spot.center.y,
+        r: spot.radius,
+        class: 'spot-outline',
         'vector-effect': 'non-scaling-stroke',
       });
     }
@@ -1361,13 +1452,14 @@ export class SuperPhotoEditor {
     this.setText('status-zoom', `${Math.round(this.zoom * 100)} %`);
     if (this.selection) {
       const bounds = selectionBounds(this.selection);
+      const feather = selectionFeather(this.selection);
       const points =
         this.selection.type === 'poly'
           ? selectionRings(this.selection).reduce((total, ring) => total + ring.length, 0)
           : 0;
       this.setText(
         'status-selection',
-        `Sélection · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px${points ? ` · ${points} pts` : ''}`,
+        `Sélection · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px${points ? ` · ${points} pts` : ''}${feather ? ` · contour ${feather} px` : ''}`,
       );
     } else {
       this.setText('status-selection', 'Aucune sélection');
@@ -1408,6 +1500,7 @@ export class SuperPhotoEditor {
   // ───────────────────────────────────────────────────────────────────────────
 
   private setTool(tool: ToolId): void {
+    this.closeCanvasMenu();
     if (this.adjustment) this.cancelAdjustment();
     if (tool !== 'crop' && this.pendingCrop) {
       this.pendingCrop = null;
@@ -1486,6 +1579,9 @@ export class SuperPhotoEditor {
       case 'heal':
         body.innerHTML = this.healOptionsHtml();
         break;
+      case 'spotlight':
+        body.innerHTML = this.spotlightOptionsHtml();
+        break;
       case 'eyedropper':
         body.innerHTML = this.eyedropperOptionsHtml();
         break;
@@ -1509,7 +1605,13 @@ export class SuperPhotoEditor {
         <span class="option-card-label">Calque actif</span>
         <strong>${layer ? escapeHtml(layer.name) : '—'}</strong>
         <span class="option-card-sub">${layer ? KIND_LABELS[layer.kind] : 'Sélectionnez un calque'}</span>
-      </div>`;
+      </div>
+      ${this.featherFieldHtml()}
+      <div class="button-row">
+        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>Remplir</button>
+        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
+      </div>
+      <p class="options-hint">Le contour progressif s’applique aux sélections suivantes. Clic droit dans la toile : remplir, effacer, inverser.</p>`;
   }
 
   private marqueeOptionsHtml(): string {
@@ -1520,12 +1622,23 @@ export class SuperPhotoEditor {
         <button data-marquee="ellipse" class="${mode === 'ellipse' ? 'is-active' : ''}">Ellipse</button>
         <button data-marquee="lasso" class="${mode === 'lasso' ? 'is-active' : ''}">Lasso</button>
       </div>
+      ${this.featherFieldHtml()}
       <div class="button-row">
         <button class="btn ghost sm" data-action="select-all">Tout sélectionner</button>
         <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
         <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>Inverser</button>
+        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>Remplir</button>
       </div>
-      <p class="options-hint">${this.selection ? 'Les réglages et tracés sont limités à la sélection.' : 'Aucune sélection : les outils agissent sur tout le calque.'}</p>`;
+      <p class="options-hint">${this.selection ? 'Les réglages et tracés sont limités à la sélection. Clic droit dans la toile : remplir la sélection.' : 'Aucune sélection : les outils agissent sur tout le calque.'}</p>`;
+  }
+
+  /** Contour progressif, partagé par la zone de sélection et la baguette. */
+  private featherFieldHtml(): string {
+    const feather = Math.round(this.selectionFeather);
+    return `
+      <label class="range-field">Contour progressif <output data-feather-output>${feather} px</output>
+        <input type="range" min="0" max="120" step="1" data-feather-field value="${feather}">
+      </label>`;
   }
 
   private wandOptionsHtml(): string {
@@ -1536,11 +1649,28 @@ export class SuperPhotoEditor {
       </label>
       <label class="check-field"><input type="checkbox" data-wand-field="contiguous" ${wand.contiguous ? 'checked' : ''}> Zones contiguës</label>
       <label class="check-field"><input type="checkbox" data-wand-field="merged" ${wand.merged ? 'checked' : ''}> Échantillonner l’image composée</label>
+      ${this.featherFieldHtml()}
       <div class="button-row">
         <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
         <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>Inverser</button>
+        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>Remplir</button>
       </div>
       <p class="options-hint">${escapeHtml(TOOLS['magic-wand'].hint)}</p>`;
+  }
+
+  private spotlightOptionsHtml(): string {
+    const spot = this.spotlight;
+    return `
+      <label class="range-field">Diamètre <output data-spot-output="diameter">${Math.round(spot.diameter)} px</output>
+        <input type="range" min="20" max="2400" step="10" data-spot-field="diameter" value="${spot.diameter}">
+      </label>
+      <label class="range-field">Intensité <output data-spot-output="intensity">${spot.intensity} %</output>
+        <input type="range" min="1" max="100" step="1" data-spot-field="intensity" value="${spot.intensity}">
+      </label>
+      <label class="range-field">Douceur <output data-spot-output="softness">${spot.softness} %</output>
+        <input type="range" min="0" max="100" step="1" data-spot-field="softness" value="${spot.softness}">
+      </label>
+      <p class="options-hint">${escapeHtml(TOOLS.spotlight.hint)} La sélection, si elle existe, limite la lumière.</p>`;
   }
 
   private paintTargetHtml(): string {
@@ -2010,6 +2140,7 @@ export class SuperPhotoEditor {
     this.preferencesSnapshot = { ...this.preferences };
     this.showPreferencesTab('appearance');
     this.syncPreferencesUI();
+    this.closeCanvasMenu();
     this.preferencesModal.classList.add('is-open');
   }
 
@@ -2220,6 +2351,39 @@ export class SuperPhotoEditor {
     if (target.matches('[data-patch-field]')) {
       this.onPatchFieldInput(target);
     }
+    if (target.matches('[data-feather-field]')) {
+      this.onFeatherInput(Number(target.value));
+      return;
+    }
+    if (target.matches('[data-spot-field]')) {
+      this.onSpotlightInput(target as HTMLInputElement);
+    }
+  }
+
+  private onFeatherInput(value: number): void {
+    this.selectionFeather = clamp(Math.round(value), 0, 120);
+    const output = this.toolOptions.querySelector<HTMLElement>('[data-feather-output]');
+    if (output) output.textContent = `${this.selectionFeather} px`;
+    if (this.selection) {
+      this.selection = { ...this.selection, feather: this.selectionFeather };
+      this.renderOverlay();
+      this.updateStatus();
+    }
+    this.syncRangeFills();
+  }
+
+  private onSpotlightInput(target: HTMLInputElement): void {
+    const key = target.dataset.spotField as 'diameter' | 'intensity' | 'softness' | undefined;
+    if (!key) return;
+    const value = Number(target.value);
+    if (!Number.isFinite(value)) return;
+    this.spotlight[key] = value;
+    const output = this.toolOptions.querySelector<HTMLElement>(`[data-spot-output="${key}"]`);
+    if (output) {
+      output.textContent = key === 'diameter' ? `${Math.round(value)} px` : `${Math.round(value)} %`;
+    }
+    this.syncRangeFills();
+    this.renderOverlay();
   }
 
   private onOptionChange(event: Event): void {
@@ -2451,10 +2615,15 @@ export class SuperPhotoEditor {
             type: 'rect',
             rect: { x: 0, y: 0, w: this.doc.width, h: this.doc.height },
             invert: false,
+            feather: this.selectionFeather,
           };
           this.renderOverlay();
           this.renderToolOptions();
+          this.updateStatus();
         }
+        break;
+      case 'fill-selection':
+        this.fillSelection(this.primaryColor);
         break;
       case 'deselect':
         this.selection = null;
@@ -3045,6 +3214,7 @@ export class SuperPhotoEditor {
       id: adjustment.id,
       params: adjustment.params,
       selection,
+      mask: this.adjustmentCoverage(selection, adjustment.preview.width, adjustment.preview.height),
       curves: adjustment.curves,
       channel: adjustment.channel,
     });
@@ -3084,6 +3254,11 @@ export class SuperPhotoEditor {
       id: adjustment.id,
       params: adjustment.params,
       selection: this.selection,
+      mask: this.adjustmentCoverage(
+        this.selection,
+        adjustment.original.width,
+        adjustment.original.height,
+      ),
       curves: adjustment.curves,
       channel: adjustment.channel,
     });
@@ -3392,6 +3567,7 @@ export class SuperPhotoEditor {
     const lock = byId<HTMLButtonElement>('new-ratio-lock');
     lock.classList.toggle('is-active', this.newDocRatioLock);
     lock.setAttribute('aria-pressed', String(this.newDocRatioLock));
+    this.closeCanvasMenu();
     this.newDocModal.classList.add('is-open');
     this.syncNewDocPreview();
     window.setTimeout(() => {
@@ -3402,6 +3578,9 @@ export class SuperPhotoEditor {
 
   private closeNewDocumentDialog(): void {
     this.newDocModal.classList.remove('is-open');
+    // Le champ de saisie gardait le focus après la fermeture : les raccourcis
+    // clavier (V, M, B…) étaient alors ignorés.
+    (document.activeElement as HTMLElement | null)?.blur();
     if (!this.doc) this.emptyState.hidden = false;
   }
 
@@ -3467,6 +3646,7 @@ export class SuperPhotoEditor {
       this.renderToolOptions();
     }
     this.resizeMode = mode;
+    this.closeCanvasMenu();
     const width = byId<HTMLInputElement>('resize-width');
     const height = byId<HTMLInputElement>('resize-height');
     const dpi = byId<HTMLInputElement>('resize-dpi');
@@ -3591,6 +3771,7 @@ export class SuperPhotoEditor {
       this.renderToolOptions();
     }
     this.exportFormat = 'png';
+    this.closeCanvasMenu();
     const filename = byId<HTMLInputElement>('export-filename');
     filename.value = `${sanitizeFilename(this.doc.name)}.png`;
     byId('export-dimensions').textContent = `${this.doc.width} × ${this.doc.height} px · ${Math.round(this.doc.dpi)} ppp`;
@@ -3724,7 +3905,153 @@ export class SuperPhotoEditor {
       },
       { passive: false },
     );
-    this.display.addEventListener('contextmenu', (event) => event.preventDefault());
+    this.display.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.openCanvasMenu(event);
+    });
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Menu contextuel de la toile
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private bindCanvasMenu(): void {
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (this.canvasMenu && !this.canvasMenu.contains(event.target as Node)) {
+          this.closeCanvasMenu();
+        }
+      },
+      true,
+    );
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.key !== 'Escape' || !this.canvasMenu) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeCanvasMenu();
+      },
+      true,
+    );
+    this.viewport.addEventListener('scroll', () => this.closeCanvasMenu(), { passive: true });
+    window.addEventListener('resize', () => this.closeCanvasMenu(), { passive: true });
+  }
+
+  private closeCanvasMenu(): void {
+    this.canvasMenu?.remove();
+    this.canvasMenu = null;
+  }
+
+  /**
+   * Clic droit dans la toile : les actions de sélection à portée de main, dont
+   * « Remplir la sélection ». Le menu reste sobre et se ferme au premier clic
+   * extérieur, à Échap ou au défilement.
+   */
+  private openCanvasMenu(event: MouseEvent): void {
+    const doc = this.doc;
+    if (!doc || this.adjustment) return;
+    this.closeCanvasMenu();
+    const selection = this.selection;
+    const bounds = selection ? selectionBounds(selection) : null;
+    const feather = selection ? selectionFeather(selection) : 0;
+
+    const menu = document.createElement('div');
+    menu.className = 'canvas-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Actions de sélection');
+
+    const head = document.createElement('div');
+    head.className = 'canvas-menu-head';
+    head.textContent = selection && bounds
+      ? `Sélection · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px${feather ? ` · contour ${feather} px` : ''}`
+      : 'Aucune sélection';
+    menu.appendChild(head);
+
+    const items: Array<
+      { label: string; hint?: string; disabled?: boolean; run: () => void } | null
+    > = [
+      {
+        label: 'Remplir la sélection',
+        hint: 'Alt+Retour',
+        disabled: !selection,
+        run: () => this.fillSelection(this.primaryColor),
+      },
+      {
+        label: 'Effacer le contenu',
+        hint: 'Suppr',
+        disabled: !selection,
+        run: () => this.clearSelectionContent(),
+      },
+      null,
+      {
+        label: 'Inverser la sélection',
+        disabled: !selection,
+        run: () => {
+          if (!this.selection) return;
+          this.selection = { ...this.selection, invert: !this.selection.invert };
+          this.renderOverlay();
+          this.updateStatus();
+        },
+      },
+      {
+        label: 'Désélectionner',
+        hint: 'Échap',
+        disabled: !selection,
+        run: () => {
+          this.selection = null;
+          this.renderOverlay();
+          this.renderToolOptions();
+          this.updateStatus();
+        },
+      },
+      {
+        label: 'Tout sélectionner',
+        hint: 'Ctrl+A',
+        run: () => this.handleAction('select-all'),
+      },
+    ];
+
+    for (const item of items) {
+      if (!item) {
+        const separator = document.createElement('div');
+        separator.className = 'canvas-menu-sep';
+        separator.setAttribute('role', 'separator');
+        menu.appendChild(separator);
+        continue;
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'canvas-menu-item';
+      button.setAttribute('role', 'menuitem');
+      button.disabled = Boolean(item.disabled);
+      const label = document.createElement('span');
+      label.textContent = item.label;
+      button.appendChild(label);
+      if (item.hint) {
+        const hint = document.createElement('kbd');
+        hint.textContent = item.hint;
+        button.appendChild(hint);
+      }
+      button.addEventListener('click', () => {
+        this.closeCanvasMenu();
+        item.run();
+      });
+      menu.appendChild(button);
+    }
+
+    menu.style.visibility = 'hidden';
+    document.body.appendChild(menu);
+    this.canvasMenu = menu;
+    const rect = menu.getBoundingClientRect();
+    const margin = 8;
+    const left = clamp(event.clientX, margin, Math.max(margin, window.innerWidth - rect.width - margin));
+    const top = clamp(event.clientY, margin, Math.max(margin, window.innerHeight - rect.height - margin));
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.visibility = 'visible';
+    menu.querySelector<HTMLButtonElement>('.canvas-menu-item:not(:disabled)')?.focus();
   }
 
   private onPointerDown(event: PointerEvent): void {
@@ -3811,6 +4138,9 @@ export class SuperPhotoEditor {
       case 'gradient':
         this.drag = { kind: 'gradient', start: point, current: point };
         break;
+      case 'spotlight':
+        this.drag = { kind: 'spotlight', start: point, current: point };
+        break;
       case 'eyedropper':
         this.sampleColor(event.clientX, event.clientY, event.altKey);
         this.drag = { kind: 'eyedropper' };
@@ -3866,6 +4196,7 @@ export class SuperPhotoEditor {
     this.pointerInside = inside;
     const drag = this.drag;
     if (!drag) {
+      if (this.activeTool === 'spotlight') this.renderOverlay();
       this.updateStatus();
       return;
     }
@@ -3894,6 +4225,10 @@ export class SuperPhotoEditor {
       case 'shape':
       case 'gradient':
         drag.current = this.constrainPoint(drag.start, this.docPoint(event), event.shiftKey);
+        this.renderOverlay();
+        break;
+      case 'spotlight':
+        drag.current = this.docPoint(event);
         this.renderOverlay();
         break;
       case 'eyedropper':
@@ -3962,6 +4297,9 @@ export class SuperPhotoEditor {
         break;
       case 'gradient':
         this.finishGradient(drag);
+        break;
+      case 'spotlight':
+        this.finishSpotlight(drag);
         break;
       case 'move':
         this.finishMove(drag);
@@ -4293,6 +4631,13 @@ export class SuperPhotoEditor {
     const canvas = drag.target === 'mask' ? layer.mask : layer.canvas;
     if (!canvas) return;
     const before = drag.before;
+    const mask = this.getSelectionMask();
+    if (mask && mask.width === canvas.width && mask.height === canvas.height) {
+      const blended = blendThroughMask(before, canvas, mask.canvas);
+      const ctx = canvasContext(canvas);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(blended, 0, 0);
+    }
     const after = cloneCanvas(canvas);
     this.history.push({
       label: drag.label,
@@ -4341,10 +4686,16 @@ export class SuperPhotoEditor {
       const rings = [...selectionRings(this.selection), ...selectionRings(found)];
       const first = rings[0];
       if (first) {
-        this.selection = { type: 'poly', points: first, rings, invert: this.selection.invert };
+        this.selection = {
+          type: 'poly',
+          points: first,
+          rings,
+          invert: this.selection.invert,
+          feather: this.selectionFeather,
+        };
       }
     } else {
-      this.selection = found;
+      this.selection = { ...found, feather: this.selectionFeather };
     }
     const bounds = selectionBounds(this.selection);
     this.setMessage(
@@ -4436,7 +4787,12 @@ export class SuperPhotoEditor {
   private finishMarquee(drag: Extract<DragState, { kind: 'marquee' }>): void {
     if (drag.mode === 'lasso') {
       if (drag.points.length >= 3) {
-        this.selection = { type: 'poly', points: drag.points.map((point) => ({ ...point })), invert: false };
+        this.selection = {
+          type: 'poly',
+          points: drag.points.map((point) => ({ ...point })),
+          invert: false,
+          feather: this.selectionFeather,
+        };
       } else {
         this.selection = null;
       }
@@ -4453,11 +4809,13 @@ export class SuperPhotoEditor {
             h: Math.round(rect.h),
           },
           invert: false,
+          feather: this.selectionFeather,
         };
       }
     }
     this.renderOverlay();
     this.renderToolOptions();
+    this.updateStatus();
   }
 
   private finishCrop(drag: Extract<DragState, { kind: 'crop' }>): void {
@@ -4540,10 +4898,13 @@ export class SuperPhotoEditor {
       beforeCanvas = cloneCanvas(target.canvas);
     }
     const ctx = canvasContext(target.canvas);
+    const featherMask = this.getSelectionMask();
+    const featherBase = beforeCanvas ?? createCanvas(target.canvas.width, target.canvas.height);
     ctx.save();
-    this.applySelectionClip(ctx);
+    if (!featherMask) this.applySelectionClip(ctx);
     this.drawShape(ctx, drag.start, drag.current);
     ctx.restore();
+    if (featherMask) this.composeFeathered(featherBase, target.canvas);
     if (useNewLayer) {
       const insertAt = doc.layers.findIndex((layer) => layer.id === target.id);
       this.history.push({
@@ -4610,10 +4971,13 @@ export class SuperPhotoEditor {
       beforeCanvas = cloneCanvas(target.canvas);
     }
     const ctx = canvasContext(target.canvas);
+    const featherMask = this.getSelectionMask();
+    const featherBase = beforeCanvas ?? createCanvas(target.canvas.width, target.canvas.height);
     ctx.save();
-    this.applySelectionClip(ctx);
+    if (!featherMask) this.applySelectionClip(ctx);
     this.drawGradient(ctx, drag.start, drag.current);
     ctx.restore();
+    if (featherMask) this.composeFeathered(featherBase, target.canvas);
     if (useNewLayer) {
       const insertAt = doc.layers.findIndex((layer) => layer.id === target.id);
       this.history.push({
@@ -4653,6 +5017,100 @@ export class SuperPhotoEditor {
     this.renderAll();
     this.renderToolOptions();
     this.setMessage('Dégradé appliqué');
+  }
+
+  private finishSpotlight(drag: Extract<DragState, { kind: 'spotlight' }>): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) return;
+    if (layer.mask && layer.maskEditing) {
+      this.toast('Quittez l’édition du masque pour poser un point lumineux.', 'info');
+      return;
+    }
+    const distance = Math.hypot(drag.current.x - drag.start.x, drag.current.y - drag.start.y);
+    const radius = Math.max(
+      4,
+      distance > 6 ? distance : this.spotlight.diameter / 2,
+    );
+    this.applySpotlight(drag.start, radius, this.spotlight.intensity, this.spotlight.softness);
+  }
+
+  /**
+   * Éclaircit une zone circulaire au bord progressif. Le calcul se limite à la
+   * boîte du point lumineux : sur une image 6000 × 4000, seule une fraction des
+   * pixels est touchée. La sélection (nette ou floue) sert de limite.
+   */
+  private applySpotlight(center: Point, radius: number, intensity: number, softness: number): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) return;
+    if (layer.kind !== 'raster') {
+      layer.kind = 'raster';
+      layer.text = undefined;
+      layer.path = undefined;
+    }
+    const canvas = layer.canvas;
+    const before = cloneCanvas(canvas);
+    const x0 = clamp(Math.floor(center.x - radius), 0, canvas.width);
+    const y0 = clamp(Math.floor(center.y - radius), 0, canvas.height);
+    const x1 = clamp(Math.ceil(center.x + radius), 0, canvas.width);
+    const y1 = clamp(Math.ceil(center.y + radius), 0, canvas.height);
+    const width = x1 - x0;
+    const height = y1 - y0;
+    if (width <= 0 || height <= 0) return;
+
+    const ctx = canvasContext(canvas);
+    const image = ctx.getImageData(x0, y0, width, height);
+    const data = image.data;
+    const amount = clamp(intensity / 100, 0, 1);
+    const inner = 1 - clamp(softness / 100, 0, 1);
+    const ramp = Math.max(0.0001, 1 - inner);
+    const mask = this.getSelectionMask();
+    const selection = this.selection;
+
+    for (let py = 0; py < height; py += 1) {
+      const gy = y0 + py + 0.5;
+      for (let px = 0; px < width; px += 1) {
+        const dx = (x0 + px + 0.5 - center.x) / radius;
+        const dy = (gy - center.y) / radius;
+        const distance = Math.hypot(dx, dy);
+        if (distance >= 1) continue;
+        let falloff = distance <= inner ? 1 : 1 - (distance - inner) / ramp;
+        falloff = clamp(falloff, 0, 1);
+        falloff = falloff * falloff * (3 - 2 * falloff);
+        let coverage = 1;
+        if (mask) coverage = (mask.data[(y0 + py) * mask.width + (x0 + px)] ?? 0) / 255;
+        else if (selection) coverage = selectionContains(selection, x0 + px + 0.5, gy) ? 1 : 0;
+        const alpha = falloff * amount * coverage;
+        if (alpha <= 0.001) continue;
+        const index = (py * width + px) * 4;
+        data[index] = (data[index] ?? 0) + (255 - (data[index] ?? 0)) * alpha;
+        data[index + 1] = (data[index + 1] ?? 0) + (255 - (data[index + 1] ?? 0)) * alpha;
+        data[index + 2] = (data[index + 2] ?? 0) + (255 - (data[index + 2] ?? 0)) * alpha;
+      }
+    }
+    ctx.putImageData(image, x0, y0);
+
+    const after = cloneCanvas(canvas);
+    this.history.push({
+      label: 'Point lumineux',
+      undo: () => {
+        const context = canvasContext(canvas);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(before, 0, 0);
+        this.renderAll();
+      },
+      redo: () => {
+        const context = canvasContext(canvas);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(after, 0, 0);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage(`Point lumineux · ${Math.round(radius * 2)} px · ${Math.round(intensity)} %`);
   }
 
   private drawShape(ctx: CanvasRenderingContext2D, start: Point, current: Point): void {
@@ -4802,41 +5260,39 @@ export class SuperPhotoEditor {
     const doc = this.doc;
     const selection = this.selection;
     if (!doc || !selection) return;
-    const path = new Path2D();
-    if (selection.type === 'rect') {
-      path.rect(selection.rect.x, selection.rect.y, selection.rect.w, selection.rect.h);
-    } else if (selection.type === 'ellipse') {
-      path.ellipse(
-        selection.rect.x + selection.rect.w / 2,
-        selection.rect.y + selection.rect.h / 2,
-        Math.max(0.1, selection.rect.w / 2),
-        Math.max(0.1, selection.rect.h / 2),
-        0,
-        0,
-        Math.PI * 2,
-      );
-    } else {
-      const rings = selectionRings(selection);
-      for (const ring of rings) {
-        const first = ring[0];
-        if (!first) continue;
-        path.moveTo(first.x, first.y);
-        for (let i = 1; i < ring.length; i += 1) {
-          const point = ring[i];
-          if (point) path.lineTo(point.x, point.y);
-        }
-        path.closePath();
-      }
-    }
-    const evenOdd = selection.type === 'poly' && selectionRings(selection).length > 1;
-    if (selection.invert) {
-      const even = new Path2D();
-      even.rect(0, 0, doc.width, doc.height);
-      even.addPath(path);
-      ctx.clip(even, 'evenodd');
-    } else {
-      ctx.clip(path, evenOdd ? 'evenodd' : 'nonzero');
-    }
+    const geometry = selectionPath(selection, doc.width, doc.height);
+    ctx.clip(geometry.path, geometry.rule);
+  }
+
+  /** Masque flou de la sélection courante, à la résolution du document. */
+  private getSelectionMask(): SelectionMask | null {
+    const doc = this.doc;
+    const selection = this.selection;
+    if (!doc || !selection) return null;
+    if (selectionFeather(selection) <= 0) return null;
+    const key = `${doc.width}x${doc.height}:${selectionFeather(selection)}:${JSON.stringify(selection)}`;
+    if (this.selectionMaskCache?.key === key) return this.selectionMaskCache.mask;
+    const mask = buildSelectionMask(selection, doc.width, doc.height);
+    this.selectionMaskCache = mask ? { key, mask } : null;
+    return mask;
+  }
+
+  /**
+   * Couverture 0 → 255 pour les réglages : ils lisent des ImageData et n'ont
+   * besoin que du canal alpha, éventuellement à l'échelle de l'aperçu.
+   */
+  private adjustmentCoverage(
+    selection: Selection | null,
+    width: number,
+    height: number,
+  ): Uint8ClampedArray | null {
+    if (!selection || selectionFeather(selection) <= 0) return null;
+    const key = `${width}x${height}:${selectionFeather(selection)}:${JSON.stringify(selection)}`;
+    if (this.adjustmentMaskCache?.key === key) return this.adjustmentMaskCache.data;
+    const mask = buildSelectionMask(selection, width, height);
+    if (!mask) return null;
+    this.adjustmentMaskCache = { key, data: mask.data };
+    return mask.data;
   }
 
   private constrainCropRect(start: Point, current: Point, ratio: number | null): Rect {
@@ -5302,6 +5758,11 @@ export class SuperPhotoEditor {
           this.fitToView();
           return;
         }
+        if (key === 'a') {
+          event.preventDefault();
+          if (this.doc) this.handleAction('select-all');
+          return;
+        }
         if (key === '1') {
           event.preventDefault();
           this.setZoom(1);
@@ -5342,6 +5803,13 @@ export class SuperPhotoEditor {
         }
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (event.altKey) {
+          if (this.selection) {
+            event.preventDefault();
+            this.fillSelection(this.primaryColor);
+            return;
+          }
+        }
         if (this.selection) {
           event.preventDefault();
           this.clearSelectionContent();
@@ -5362,6 +5830,7 @@ export class SuperPhotoEditor {
         s: 'stamp',
         j: 'patch',
         k: 'heal',
+        l: 'spotlight',
         i: 'eyedropper',
         g: 'gradient',
         z: 'zoom',
@@ -5407,6 +5876,7 @@ export class SuperPhotoEditor {
     this.applySelectionClip(ctx);
     ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
     ctx.restore();
+    this.composeFeathered(before, layer.canvas);
     const after = cloneCanvas(layer.canvas);
     this.history.push({
       label: 'Effacer la sélection',
@@ -5425,6 +5895,76 @@ export class SuperPhotoEditor {
     });
     this.layersDirty = true;
     this.renderAll();
+  }
+
+  /**
+   * Recombine le calque à travers le masque de contour progressif. Sans
+   * sélection floue, la fonction ne fait rien : les opérations restent au bord
+   * net, sans coût supplémentaire.
+   */
+  private composeFeathered(before: HTMLCanvasElement, canvas: HTMLCanvasElement): void {
+    const mask = this.getSelectionMask();
+    if (!mask || mask.width !== canvas.width || mask.height !== canvas.height) return;
+    const blended = blendThroughMask(before, canvas, mask.canvas);
+    const ctx = canvasContext(canvas);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(blended, 0, 0);
+  }
+
+  private fillSelection(color: string): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    const selection = this.selection;
+    if (!doc || !layer) return;
+    if (!selection) {
+      this.toast('Tracez une sélection avant de la remplir.', 'info');
+      return;
+    }
+    if (layer.kind === 'text' || layer.kind === 'path') {
+      this.toast('Aplatissez ou dupliquez le calque avant de le remplir.', 'info');
+      return;
+    }
+    const isMask = Boolean(layer.mask && layer.maskEditing);
+    const canvas = isMask ? layer.mask : layer.canvas;
+    if (!canvas) return;
+    const before = cloneCanvas(canvas);
+    const fill = isMask ? '#ffffff' : color;
+    const ctx = canvasContext(canvas);
+    const featherMask = this.getSelectionMask();
+    if (featherMask) {
+      // Avec un contour progressif, on remplit toute la surface : c'est le
+      // masque qui décide de l'opacité, sinon le bord resterait net.
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      this.composeFeathered(before, canvas);
+    } else {
+      ctx.save();
+      this.applySelectionClip(ctx);
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+    const after = cloneCanvas(canvas);
+    const label = isMask ? 'Remplir le masque' : 'Remplir la sélection';
+    this.history.push({
+      label,
+      undo: () => {
+        const context = canvasContext(canvas);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(before, 0, 0);
+        this.renderAll();
+      },
+      redo: () => {
+        const context = canvasContext(canvas);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(after, 0, 0);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage(`${label} · ${fill.toUpperCase()}`);
   }
 
   private bindDragAndDrop(): void {

@@ -51,7 +51,7 @@ Le bouton **Ouvrir depuis l’ordinateur** utilise les dialogues natifs Tauri en
 | Outil | Rôle |
 | --- | --- |
 | **Sélection** (V) | Choisir un calque au clic, déplacer son contenu au glisser. |
-| **Zone de sélection** (M) | Rectangle, ellipse ou lasso ; tout sélectionner, désélectionner, inverser. Les réglages et les tracés respectent la sélection. |
+| **Zone de sélection** (M) | Rectangle, ellipse ou lasso ; **contour progressif** de 0 à 120 px, visible dans la toile (bande translucide) et appliqué au pinceau, au remplissage, aux objets et aux réglages. Tout sélectionner, désélectionner, inverser. Clic droit dans la toile : **Remplir la sélection**, effacer, inverser, désélectionner. |
 | **Baguette magique** (W) | Sélection par couleur proche, tolérance réglable, zones contiguës ou globales, échantillonnage du calque ou de l’image composée. Le contour devient une sélection polygonale (trous compris) : détourage, inversion et réglages fonctionnent dessus. |
 | **Recadrage** (C) | Cadre libre ou ratios 1:1, 4:3, 16:9, 3:2, 4:5 ; validation par Entrée ou bouton Appliquer. |
 | **Objets** (U) | Rectangle, ellipse, triangle, étoile et ligne, avec remplissage, contour, épaisseur et rayon. |
@@ -63,6 +63,7 @@ Le bouton **Ouvrir depuis l’ordinateur** utilise les dialogues natifs Tauri en
 | **Tampon** (S) | Clonage : Alt+clic définit la source, puis on peint. Option **Correcteur** pour harmoniser la couleur copiée avec la zone d’accueil. Échantillonne l’image composée. |
 | **Pièce** (J) | Tracez la zone à réparer, puis glissez-la sur une zone propre : le contenu propre remplace la zone. Avec ou sans **Correcteur** (harmonisation colorimétrique). |
 | **Correcteur** (K) | Peinture de retouche : la source est choisie automatiquement parmi quatre zones voisines (rejet de la valeur aberrante) et sa couleur est harmonisée. |
+| **Point lumineux** (L) | Éclaircit une zone circulaire : diamètre, intensité et douceur réglables. Clic pour poser au diamètre choisi, glisser depuis le centre pour ajuster le rayon. La sélection (nette ou floue) limite la lumière. |
 | **Pipette** (I) | Prélèvement de couleur dans l’image composite (Alt = couleur secondaire). |
 | **Dégradé** (G) | Linéaire ou radial, couleur → transparent, couleur → secondaire, secondaire → transparent. |
 | **Zoom** (Z) | Zoom avant/arrière, ajustement, 100 %, 200 %, 400 %, molette avec Ctrl/⌘. |
@@ -101,7 +102,7 @@ Les préférences s’ouvrent avec le bouton **⚙** de la barre supérieure ou 
 
 | Onglet | Réglages |
 | --- | --- |
-| **Apparence** | Thème **Clair / Sombre / Système**, couleur d’accent (Orange, Encre, Bleu, Vert, Rose), animations normales ou réduites. |
+| **Apparence** | Thème **Clair / Sombre / Système**, animations normales ou réduites. L'interface reste **noir et blanc** : aucun accent coloré. |
 | **Toile** | Damier de transparence (auto/clair/sombre), qualité de rendu (rapide/équilibrée/précise), coordonnées du curseur, lissage du zoom, ajustement automatique au redimensionnement. **Session** : sauvegarde automatique et bouton pour oublier la session enregistrée. |
 | **Raccourcis** | Toutes les combinaisons clavier, classées par outil, fichier et vue. |
 | **À propos** | Version, technologies, crédits, licence. |
@@ -112,13 +113,14 @@ Les préférences s’ouvrent avec le bouton **⚙** de la barre supérieure ou 
 
 | Raccourci | Action |
 | --- | --- |
-| `V` `M` `W` `C` `U` `P` `T` `N` `B` `E` `S` `J` `K` `I` `G` `Z` `H` | Outils (Sélection, Zone, Baguette, Recadrage, Objets, Plume, Texte, Crayon, Pinceau, Gomme, Tampon, Pièce, Correcteur, Pipette, Dégradé, Zoom, Main) |
+| `V` `M` `W` `C` `U` `P` `T` `N` `B` `E` `S` `J` `K` `L` `I` `G` `Z` `H` | Outils (Sélection, Zone, Baguette, Recadrage, Objets, Plume, Texte, Crayon, Pinceau, Gomme, Tampon, Pièce, Correcteur, Point lumineux, Pipette, Dégradé, Zoom, Main) |
 | `[` / `]` | Taille du pinceau (ou du crayon) |
 | `Alt + clic` | Source du tampon · gomme temporaire · couleur secondaire (pipette) |
 | `Ctrl/⌘ + Z` | Annuler |
 | `Ctrl/⌘ + Shift + Z` ou `Ctrl/⌘ + Y` | Rétablir |
 | `Ctrl/⌘ + N` | Nouveau document |
 | `Ctrl/⌘ + O` | Ouvrir une image |
+| `Ctrl/⌘ + A` | Tout sélectionner |
 | `Ctrl/⌘ + S` | Exporter |
 | `Ctrl/⌘ + ,` | Préférences |
 | `Ctrl/⌘ + 0` | Ajuster à la fenêtre |
@@ -127,6 +129,7 @@ Les préférences s’ouvrent avec le bouton **⚙** de la barre supérieure ou 
 | `Entrée` | Appliquer le recadrage / terminer la plume |
 | `Échap` | Annuler le réglage, le recadrage ou la sélection |
 | `Suppr` | Effacer le contenu de la sélection |
+| `Alt + Retour arrière` | Remplir la sélection avec la couleur principale |
 | `Espace` | Main temporaire |
 
 ---
@@ -265,7 +268,7 @@ envoi sur `main` :
 | Job | Produit |
 | --- | --- |
 | **Web (FTP)** | `superphoto-web.zip` — le dossier à décompresser sur le serveur |
-| **Windows x64** | installeur NSIS `SuperPhoto_0.1.0_x64-setup.exe` |
+| **Windows x64** | installeur NSIS `SuperPhoto_0.1.3_x64-setup.exe` |
 | **Linux x64** | paquet `.deb` et `.AppImage` |
 | **macOS universel** | `.dmg` signé pour Apple Silicon **et** Intel (`universal-apple-darwin`) |
 

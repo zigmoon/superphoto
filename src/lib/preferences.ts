@@ -1,5 +1,6 @@
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type AccentId = 'orange' | 'ink' | 'blue' | 'green' | 'rose';
+/** Interface noir et blanc : l'accent est l'encre (ou le blanc en thème sombre). */
+export type AccentId = 'ink';
 export type CheckerId = 'auto' | 'light' | 'dark';
 export type MotionMode = 'full' | 'reduced';
 export type RenderQuality = 'fast' | 'balanced' | 'precise';
@@ -26,7 +27,7 @@ export const PREFERENCES_EVENT = 'superphoto:preferences';
  */
 export const DEFAULT_PREFERENCES: Preferences = {
   theme: 'light',
-  accent: 'orange',
+  accent: 'ink',
   checker: 'auto',
   motion: 'full',
   quality: 'balanced',
@@ -37,7 +38,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
 };
 
 const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
-const ACCENTS: AccentId[] = ['orange', 'ink', 'blue', 'green', 'rose'];
+const ACCENTS: AccentId[] = ['ink'];
 const CHECKERS: CheckerId[] = ['auto', 'light', 'dark'];
 const MOTIONS: MotionMode[] = ['full', 'reduced'];
 const QUALITIES: RenderQuality[] = ['fast', 'balanced', 'precise'];

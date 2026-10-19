@@ -104,6 +104,8 @@ export interface AdjustOptions {
   id: AdjustmentId;
   params: Record<string, number>;
   selection: Selection | null;
+  /** Couverture du contour progressif (0 → 255), à la taille de l'ImageData. */
+  mask?: Uint8ClampedArray | null;
   curves: Record<CurveChannel, CurvePoint[]>;
   channel: CurveChannel;
 }
@@ -140,7 +142,13 @@ export function adjustImageData(original: ImageData, options: AdjustOptions): Im
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      if (selection && !selectionContains(selection, x, y)) continue;
+      let coverage = 1;
+      if (options.mask) {
+        coverage = (options.mask[y * width + x] ?? 0) / 255;
+        if (coverage <= 0) continue;
+      } else if (selection && !selectionContains(selection, x, y)) {
+        continue;
+      }
       const index = (y * width + x) * 4;
       let r = data[index] ?? 0;
       let g = data[index + 1] ?? 0;
@@ -211,9 +219,18 @@ export function adjustImageData(original: ImageData, options: AdjustOptions): Im
         }
       }
 
-      data[index] = clamp(r, 0, 255);
-      data[index + 1] = clamp(g, 0, 255);
-      data[index + 2] = clamp(b, 0, 255);
+      if (coverage >= 1) {
+        data[index] = clamp(r, 0, 255);
+        data[index + 1] = clamp(g, 0, 255);
+        data[index + 2] = clamp(b, 0, 255);
+      } else {
+        const source = original.data;
+        data[index] = (source[index] ?? 0) + (clamp(r, 0, 255) - (source[index] ?? 0)) * coverage;
+        data[index + 1] = (source[index + 1] ?? 0) +
+          (clamp(g, 0, 255) - (source[index + 1] ?? 0)) * coverage;
+        data[index + 2] = (source[index + 2] ?? 0) +
+          (clamp(b, 0, 255) - (source[index + 2] ?? 0)) * coverage;
+      }
     }
   }
   return result;
