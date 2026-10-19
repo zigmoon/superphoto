@@ -70,9 +70,22 @@ if (absolute.length > 0) {
   );
 }
 
+const cssDir = path.join(dist, 'assets');
+
+// Les fichiers `.map` ne servent qu'au débogage local : un serveur web n'en a
+// pas besoin et ils pèsent plus lourd que tout le reste. On nettoie dist/ pour
+// qu'il ne contienne *que* les fichiers à déposer par FTP.
+let prunedMaps = 0;
+for (const file of await readdir(cssDir)) {
+  if (file.endsWith('.map')) {
+    await rm(path.join(cssDir, file), { force: true });
+    prunedMaps += 1;
+  }
+}
+if (prunedMaps > 0) step(`${prunedMaps} source map(s) retirée(s) : dist/ ne garde que le nécessaire`);
+
 // Un `url(/…)` dans le CSS casserait aussi hors racine : on le signale plutôt
 // que de produire un dossier qui a l'air bon.
-const cssDir = path.join(dist, 'assets');
 const cssFiles = await readdir(cssDir).catch(() => []);
 for (const file of cssFiles.filter((f) => f.endsWith('.css'))) {
   const css = await readFile(path.join(cssDir, file), 'utf8');
@@ -96,11 +109,14 @@ step(
 if (wantZip) {
   const zipPath = path.join(root, 'superphoto-web.zip');
   await rm(zipPath, { force: true });
+  // On liste explicitement les entrées de premier niveau : l'archive s'ouvre
+  // alors sur `index.html`, `assets/`… sans dossier `.` parasite.
+  const entries = await readdir(dist);
   const zipped = spawnSync(
     process.platform === 'win32' ? 'tar.exe' : 'zip',
     process.platform === 'win32'
-      ? ['-a', '-c', '-f', zipPath, '-C', dist, '.']
-      : ['-r', '-q', zipPath, '.'],
+      ? ['-a', '-c', '-f', zipPath, '-C', dist, ...entries]
+      : ['-r', '-q', zipPath, ...entries],
     { cwd: dist, stdio: 'inherit' },
   );
   if (zipped.status !== 0) fail('Compression impossible — compressez dist/ à la main.');
