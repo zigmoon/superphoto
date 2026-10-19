@@ -71,26 +71,36 @@ if (absolute.length > 0) {
 }
 
 const cssDir = path.join(dist, 'assets');
-
-// Les fichiers `.map` ne servent qu'au débogage local : un serveur web n'en a
-// pas besoin et ils pèsent plus lourd que tout le reste. On nettoie dist/ pour
-// qu'il ne contienne *que* les fichiers à déposer par FTP.
-let prunedMaps = 0;
-for (const file of await readdir(cssDir)) {
-  if (file.endsWith('.map')) {
-    await rm(path.join(cssDir, file), { force: true });
-    prunedMaps += 1;
-  }
-}
-if (prunedMaps > 0) step(`${prunedMaps} source map(s) retirée(s) : dist/ ne garde que le nécessaire`);
+const cssFiles = (await readdir(cssDir).catch(() => [])).filter((f) => f.endsWith('.css'));
 
 // Un `url(/…)` dans le CSS casserait aussi hors racine : on le signale plutôt
 // que de produire un dossier qui a l'air bon.
-const cssFiles = await readdir(cssDir).catch(() => []);
-for (const file of cssFiles.filter((f) => f.endsWith('.css'))) {
+const cssTexts = [];
+for (const file of cssFiles) {
   const css = await readFile(path.join(cssDir, file), 'utf8');
   if (/url\(\s*['"]?\/(?!\/)/.test(css)) fail(`${file} contient un url(/…) absolu.`);
+  cssTexts.push(css);
 }
+
+// dist/ ne doit contenir *que* ce que le serveur sert réellement.
+//   • les `.map` ne servent qu'au débogage local (et exposent les sources TS) ;
+//   • les visuels de marque que personne ne référence (mark*.svg, icon-64…)
+//     restent dans public/ pour le dépôt, mais n'ont rien à faire en ligne.
+const manifestText = await readFile(path.join(dist, 'site.webmanifest'), 'utf8').catch(() => '');
+const served = new Set();
+for (const text of [html, manifestText, ...cssTexts]) {
+  for (const m of text.matchAll(/brand\/[A-Za-z0-9._-]+/g)) served.add(path.basename(m[0]));
+}
+const pruned = [];
+for (const dir of [cssDir, path.join(dist, 'brand')]) {
+  for (const file of await readdir(dir).catch(() => [])) {
+    const unusedBrand = dir.endsWith('brand') && !served.has(file);
+    if (!file.endsWith('.map') && !unusedBrand) continue;
+    await rm(path.join(dir, file), { force: true });
+    pruned.push(file);
+  }
+}
+if (pruned.length > 0) step(`${pruned.length} fichier(s) inutile(s) retiré(s) : ${pruned.join(', ')}`);
 
 const relative = [...html.matchAll(/(?:href|src)="(\.\/[^"]*)"/g)].map((m) => m[1]);
 const linked = [...html.matchAll(/(?:href|src)="([^"#][^"]*)"/g)].length;
@@ -121,15 +131,7 @@ if (wantZip) {
   );
   if (zipped.status !== 0) fail('Compression impossible — compressez dist/ à la main.');
   const zipSize = await stat(zipPath).then((s) => s.size);
-  step(`superphoto-web.zip : ${(zipSize / 1024 / 1024).toFixed(2)} Mo`);
-
-  // Copie versionnée : on garde plusieurs envois FTP côte à côte sans doute
-  // sur la version réellement déposée sur le serveur.
-  const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-  const versionedPath = path.join(root, `superphoto-web-${manifest.version}.zip`);
-  await rm(versionedPath, { force: true });
-  await writeFile(versionedPath, await readFile(zipPath));
-  step(`superphoto-web-${manifest.version}.zip : même contenu, nom daté`);
+  step(`superphoto-web.zip : ${(zipSize / 1024).toFixed(1)} Ko`);
 }
 
 process.stdout.write(
