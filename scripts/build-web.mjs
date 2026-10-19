@@ -106,6 +106,14 @@ if (wantZip) {
   if (zipped.status !== 0) fail('Compression impossible — compressez dist/ à la main.');
   const zipSize = await stat(zipPath).then((s) => s.size);
   step(`superphoto-web.zip : ${(zipSize / 1024 / 1024).toFixed(2)} Mo`);
+
+  // Copie versionnée : on garde plusieurs envois FTP côte à côte sans doute
+  // sur la version réellement déposée sur le serveur.
+  const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const versionedPath = path.join(root, `superphoto-web-${manifest.version}.zip`);
+  await rm(versionedPath, { force: true });
+  await writeFile(versionedPath, await readFile(zipPath));
+  step(`superphoto-web-${manifest.version}.zip : même contenu, nom daté`);
 }
 
 process.stdout.write(

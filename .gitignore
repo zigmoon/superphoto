@@ -10,3 +10,4 @@ Thumbs.db
 .env.*
 # Archive produite par `npm run build:web:zip` (à envoyer, pas à committer).
 superphoto-web.zip
+superphoto-web-*.zip
