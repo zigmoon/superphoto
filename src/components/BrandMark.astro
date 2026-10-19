@@ -1,0 +1,35 @@
+---
+/**
+ * Marque officielle SuperPhoto (logo déposé à la racine du projet, nettoyé puis
+ * vectorisé par `npm run brand`). Le SVG est **inliné** : aucune requête réseau,
+ * et le chemin reste valable quand la version web est posée dans un
+ * sous-dossier par FTP.
+ */
+import iconSource from '../assets/brand/app-icon.svg?raw';
+
+const viewBox = /viewBox="([^"]*)"/.exec(iconSource)?.[1] ?? '0 0 500 500';
+const inner = iconSource
+  .replace(/^[\s\S]*?<svg[^>]*>/, '')
+  .replace(/<\/svg>\s*$/, '')
+  .trim();
+
+interface Props {
+  class?: string;
+  /** Taille en pixels ; la marque reste carrée. */
+  size?: number;
+  decorative?: boolean;
+}
+
+const { class: className = '', size, decorative = false } = Astro.props;
+const style = size ? `width:${size}px;height:${size}px` : undefined;
+---
+
+<svg
+  class={className}
+  viewBox={viewBox}
+  style={style}
+  role={decorative ? 'presentation' : 'img'}
+  aria-hidden={decorative ? 'true' : undefined}
+  aria-label={decorative ? undefined : 'SuperPhoto'}
+  set:html={inner}
+/>

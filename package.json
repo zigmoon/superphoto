@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "astro dev",
+    "brand": "node scripts/brand.mjs",
     "build": "astro build",
     "build:web": "node scripts/build-web.mjs",
     "build:web:zip": "node scripts/build-web.mjs --zip",

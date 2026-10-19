@@ -1,3 +1,6 @@
+---
+import BrandMark from './BrandMark.astro';
+---
 <div class="modal-backdrop" id="preferences-modal" role="presentation">
   <div class="dialog preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="prefs-title">
     <header class="dialog-head compact prefs-head">
@@ -179,7 +182,7 @@
       <section class="prefs-panel" data-prefs-panel="about" hidden>
         <div class="about-card">
           <div class="about-brand">
-            <span class="about-mark"><svg viewBox="0 0 32 32"><use href="#i-logo"></use></svg></span>
+            <span class="about-mark"><BrandMark decorative /></span>
             <div>
               <strong>SUPERPHOTO</strong>
               <small>STUDIO DE RETOUCHE · v0.1.0</small>

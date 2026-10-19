@@ -1,5 +1,7 @@
 # SuperPhoto
 
+<img src="public/brand/readme-mark.png" alt="Logo SuperPhoto" width="88" align="right" />
+
 **Studio de retouche photographique clair ou sombre, rapide et précis — Astro + Rust (Tauri).**
 
 SuperPhoto reprend la grammaire visuelle de [SuperPrint](https://superprint.cc/app/index.html) — barres compactes, libellés mono, panneaux à filets fins, toile au centre. Le **thème clair est la palette exacte de SuperPrint** (`#f8f8f8`, `#ffffff`, `#e0e0e0`, `#1a1a1a`, toile `#e8e8e8`) ; le thème sombre est celui du studio photo. Calques à gauche, outils et réglages à droite, image au centre.
@@ -216,19 +218,73 @@ npm run desktop:build:debug     # binaire debug sans installeur
 
 La configuration Tauri se trouve dans [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json). Les assets embarqués pointent vers `../dist`.
 
-### Compilation multi-plateforme
+### Compilation multi-plateforme (GitHub Actions)
 
-Le workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) construit :
+Le workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) produit, à chaque
+envoi sur `main` :
 
-- **Windows x64** (MSI/NSIS) ;
-- **Linux x64** (deb/AppImage) ;
-- **macOS universel** (Apple Silicon + Intel).
+| Job | Produit |
+| --- | --- |
+| **Web (FTP)** | `superphoto-web.zip` — le dossier à décompresser sur le serveur |
+| **Windows x64** | installeur NSIS `SuperPhoto_0.1.0_x64-setup.exe` |
+| **Linux x64** | paquet `.deb` et `.AppImage` |
+| **macOS universel** | `.dmg` signé pour Apple Silicon **et** Intel (`universal-apple-darwin`) |
 
-Il s’exécute manuellement (`workflow_dispatch`) ou sur un tag `v*`. Les installeurs sont publiés comme artefacts GitHub Actions. Le dossier `superphoto/` est la racine du dépôt [`zigmoon/superphoto`](https://github.com/zigmoon/superphoto).
+- Les fichiers sont attachés à chaque exécution comme **artefacts** (conservés 90 jours).
+- Un tag `v*` (ou le lancement manuel avec l’option *release*) publie en plus une
+  **Release GitHub** contenant les quatre livrables.
+- Rust est mis en cache (`Swatinem/rust-cache`) et les builds sont annulés s’ils sont
+  remplacés par un envoi plus récent (`concurrency`).
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0   # → Release complète Windows + Linux + macOS + web
+```
+
+Le dépôt est [`zigmoon/superphoto`](https://github.com/zigmoon/superphoto) ; le dossier
+`superphoto/` en est la racine.
 
 ---
 
-## 4. Notes d’implémentation
+## 4. Marque et icônes
+
+Le logo officiel est déposé à la racine du projet (`super_photo_noir.svg`,
+`super_photo_blanc.svg` et leurs PNG). Les exports Illustrator contiennent une
+quarantaine de calques masqués, un `DOCTYPE` avec DTD externe — qui rend le fichier
+impossible à lire dans un canvas — et 250 Ko de métadonnées : ils ne sont **jamais**
+utilisés tels quels.
+
+```bash
+npm run brand      # régénère tous les fichiers de marque
+```
+
+`scripts/brand.mjs` ne garde que le calque visible, recolore les deux familles de formes
+(silhouette / fentes) et écrit :
+
+| Fichier | Usage |
+| --- | --- |
+| `src/assets/brand/app-icon.svg` | marque inlinée par `BrandMark.astro` (barre supérieure, état vide, À propos, fenêtre d’ouverture) |
+| `public/favicon.svg` | favicon adaptatif (pastille sombre + marque blanche, lisible en 16 px) |
+| `public/favicon-32.png`, `public/apple-touch-icon.png` | replis PNG et icône iOS |
+| `public/brand/mark.svg` | marque monochrome adaptative (`--brand-ink` / `--brand-knockout`) |
+| `public/brand/mark-light.svg`, `mark-dark.svg` | marque noire / blanche pour `<img>`, e-mails, presse |
+| `public/brand/app-icon.svg`, `icon-192.png`, `icon-512.png`, `icon-64.png` | PWA, boutiques, partages |
+| `public/brand/og-image.png` | carte de partage 1200 × 630 |
+| `public/site.webmanifest` | manifeste PWA (nom, icônes, couleurs) |
+
+Les icônes natives (`.ico`, `.icns`, Windows Store, Android, iOS) sont générées depuis
+`public/brand/app-icon.svg` :
+
+```bash
+npx tauri icon public/brand/app-icon.svg   # écrit src-tauri/icons/
+```
+
+La pastille est volontairement **identique dans les deux thèmes** (carré sombre, marque
+blanche) : un logo noir sur fond sombre disparaîtrait de la barre des tâches ou du dock.
+En mode monochrome (impression, filigrane), utilisez `mark.svg` avec `currentColor`.
+
+---
+
+## 5. Notes d’implémentation
 
 - **Calques** : chaque calque possède un canvas de la taille du document. La composition applique opacité et mode de fusion. Les calques Texte et Tracé conservent leurs métadonnées éditables ; les autres outils les rasterisent si nécessaire.
 - **Masques** : le masque est un canvas dont l’**alpha** porte la visibilité. Peindre en clair compose en `source-over`, peindre en sombre efface en `destination-out` — aucune boucle par pixel. La composition passe par un canvas de travail (`destination-in`), si bien que l’opacité et le mode de fusion du calque restent intacts.
@@ -243,9 +299,9 @@ Il s’exécute manuellement (`workflow_dispatch`) ou sur un tag `v*`. Les insta
 - **Fluidité** : une seule mise à jour pointeur par frame (les événements sont coalescés puis « flushés » au relâchement), rect de toile mis en cache, clones de calques différés au premier vrai déplacement, liste de calques mise à jour de façon incrémentale, canvas composite en contexte GPU (sans `willReadFrequently`), zoom molette coalescé, `contain: layout style` sur les panneaux, animations désactivables.
 - **Sécurité Tauri** : CSP laissée à `null` pour permettre les bundles Astro et les blobs ; les chemins de fichiers ne sont jamais exposés au JS, seuls les octets passent par les commandes.
 
-## 5. Feuille de route
+## 6. Feuille de route
 
-- Réglages non destructifs (calques de réglage) et masques de fusion.
+- Réglages non destructifs (calques de réglage).
 - Gestion colorimétrique ICC/CMYK et aperçu d’impression.
 - Import/export PSD, TIFF multipage, OpenRaster.
 - Pinceaux avec pression, flux, dureté et tablette graphique.

@@ -1,32 +1,79 @@
 name: Build SuperPhoto
 
+# Trois déclencheurs :
+#   • push sur main / tag v*  → installeurs à jour, artefacts téléchargeables 90 jours ;
+#   • tag v*                  → en plus, une Release GitHub avec tous les fichiers ;
+#   • manuel                  → pour reconstruire à la demande.
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Créer une Release GitHub avec les binaires produits'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  # ── 1. Version web : le dossier à poser par FTP ───────────────────────────
+  web:
+    name: Web (FTP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Vérifier les types
+        run: npm run check
+
+      - name: Construire la version web (liens relatifs + zip)
+        run: npm run build:web:zip
+
+      - name: Publier le zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: superphoto-web
+          path: superphoto-web.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  # ── 2. Applications de bureau : Windows, Linux, macOS ─────────────────────
+  desktop:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Windows (x64)
+          - name: Windows x64
             platform: windows-latest
             bundles: nsis
             args: ''
             artifact: superphoto-windows-x64
             bundle: src-tauri/target/release/bundle
-          - name: Linux (x64)
+          - name: Linux x64
             platform: ubuntu-22.04
             bundles: deb,appimage
             args: ''
             artifact: superphoto-linux-x64
             bundle: src-tauri/target/release/bundle
-          - name: macOS (universal)
+          - name: macOS universel
             platform: macos-latest
             bundles: dmg
             args: '--target universal-apple-darwin'
@@ -34,47 +81,94 @@ jobs:
             bundle: src-tauri/target/universal-apple-darwin/release/bundle
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Installer Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup Rust
+      - name: Installer Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install Linux dependencies
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.platform }}
+
+      - name: Dépendances Linux (WebKitGTK, AppImage)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            libxdo-dev \
-            patchelf
+            build-essential curl wget file \
+            libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libgtk-3-dev libxdo-dev libfuse2 patchelf
 
-      - name: Install frontend dependencies
+      - name: Dépendances frontend
         run: npm ci
 
-      - name: Build desktop bundle
+      - name: Construire les installeurs
         run: npx tauri build --bundles ${{ matrix.bundles }} ${{ matrix.args }}
+        env:
+          CI: true
 
-      - name: Upload installers
+      - name: Lister les fichiers produits
+        shell: bash
+        run: find "${{ matrix.bundle }}" -maxdepth 3 -type f | sort
+
+      - name: Publier les installeurs
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.bundle }}
           if-no-files-found: error
+          retention-days: 90
+
+  # ── 3. Release : tous les fichiers d'un coup, sur un tag ───────────────────
+  release:
+    name: Release GitHub
+    needs: [web, desktop]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer tous les artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Aplatir l'arborescence
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.deb' \
+            -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.zip' \) \
+            -exec cp {} release/ \;
+          ls -lh release
+
+      - name: Publier la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('nightly-{0}', github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && format('SuperPhoto {0}', github.ref_name) || format('SuperPhoto — build {0}', github.run_number) }}
+          draft: false
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          generate_release_notes: true
+          body: |
+            SuperPhoto — studio de retouche photographique.
+
+            | Plateforme | Fichier |
+            | --- | --- |
+            | Windows | `*_x64-setup.exe` (NSIS) |
+            | Linux | `*.deb`, `*.AppImage` |
+            | macOS (Apple Silicon + Intel) | `*.dmg` universel |
+            | Web / FTP | `superphoto-web.zip` — à décompresser à la racine du site |
+
+            Aucune signature de code n'est appliquée : au premier lancement, Windows
+            affiche SmartScreen et macOS demande un clic droit → Ouvrir.
+          files: release/*
+          fail_on_unmatched_files: false

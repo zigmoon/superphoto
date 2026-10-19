@@ -1,7 +1,13 @@
+---
+import BrandMark from './BrandMark.astro';
+---
 <div class="modal-backdrop is-open" id="new-document-modal" role="presentation">
   <div class="dialog new-doc-dialog" role="dialog" aria-modal="true" aria-labelledby="new-doc-title">
     <header class="dialog-head">
-      <div class="dialog-kicker">SUPERPHOTO</div>
+      <div class="dialog-kicker">
+        <span class="kicker-mark"><BrandMark decorative /></span>
+        SUPERPHOTO
+      </div>
       <h2 id="new-doc-title">Nouveau document</h2>
       <p>Définissez la toile de départ : dimensions en pixels, résolution et fond.</p>
       <button class="dialog-close" id="new-close" aria-label="Fermer">
