@@ -1955,34 +1955,6 @@ html.theme-dark .segmented button.is-active {
   color: var(--text-faint);
 }
 
-.stage-ribbon {
-  flex: none;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-base);
-  overflow: hidden;
-}
-
-.ribbon-label {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.22em;
-  color: var(--accent);
-  flex: none;
-}
-
-.ribbon-hint {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .viewport {
   flex: 1;
   min-height: 0;
@@ -2356,7 +2328,19 @@ html.theme-dark .segmented button.is-active {
   letter-spacing: 0.1em;
 }
 
+/* Le rappel de l'outil actif tient lieu de ruban : il vit dans la barre d'état,
+   se tronque proprement et laisse la place aux messages. */
+.status-hint {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .status-message {
+  flex: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3328,10 +3312,6 @@ html.theme-dark .segmented button.is-active {
 
 @media (max-width: 1050px) {
   .doc-identity {
-    display: none;
-  }
-
-  .brand-copy small {
     display: none;
   }
 }

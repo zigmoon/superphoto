@@ -766,7 +766,6 @@ const D: Record<string, [string, string, string]> = {
   'sc.swapColors': ['Swap colors', 'Inverser les couleurs', 'カラーを入れ替え'],
 
   // ── Zone de prévisualisation ────────────────────────────────────────────
-  'stage.canvas': ['CANVAS', 'TOILE', 'キャンバス'],
   'stage.zoomOut': ['Zoom out (Ctrl+-)', 'Zoom arrière (Ctrl+-)', 'ズームアウト (Ctrl+-)'],
   'stage.zoomIn': ['Zoom in (Ctrl++)', 'Zoom avant (Ctrl++)', 'ズームイン (Ctrl++)'],
   'stage.zoomValue': ['Zoom 100 % (Ctrl+1)', 'Zoom 100 % (Ctrl+1)', 'ズーム 100 % (Ctrl+1)'],

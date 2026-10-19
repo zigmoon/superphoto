@@ -1,23 +1,25 @@
 #!/usr/bin/env node
 /**
- * Fabrique les fichiers de marque à partir des exports Illustrator officiels
- * déposés à la racine du projet (`super_photo_noir.svg`, `super_photo_blanc.svg`).
+ * Fabrique les fichiers de marque à partir de l'export Illustrator officiel
+ * `super_photo_blanc.svg`, déposé à la racine du projet (source unique).
  *
- * Les exports Illustrator contiennent 40+ calques masqués, un DOCTYPE avec DTD
- * externe (qui rend le SVG « non-origin-clean » : impossible à lire dans un
- * canvas) et 250 Ko de métadonnées. On ne garde que le calque visible, on
- * retire le prolog, et on recolore les deux familles de formes :
- *   • la silhouette (polygones)  → `--brand-ink`      (currentColor par défaut)
- *   • les fentes internes (traits) → `--brand-knockout` (fond de la surface)
+ * Cet export contient 40+ calques masqués, un DOCTYPE avec DTD externe (qui rend
+ * le SVG « non-origin-clean » : impossible à lire dans un canvas) et 250 Ko de
+ * métadonnées. On ne garde que le calque visible, puis on recompose la marque :
+ *   • les 5 feuilles (polygones) sont l'encre — recolorée en `currentColor` ;
+ *   • les 5 anneaux (chemins) séparent les feuilles ; dans l'export ils sont
+ *     peints avec la couleur du fond, ce qui donnerait une plaque opaque. Ils
+ *     deviennent donc de vrais **trous** (masques), empilés dans le même ordre
+ *     de peinture que l'original pour retrouver exactement le dessin officiel.
  *
  *   node scripts/brand.mjs
  *
  * Sorties :
- *   public/brand/mark.svg        marque adaptative (currentColor + variables CSS)
- *   public/brand/mark-light.svg  marque noire, fentes blanches  (<img>, e-mails)
- *   public/brand/mark-dark.svg   marque blanche, fentes noires
- *   public/brand/app-icon.svg    pastille sombre + marque blanche (icône d’app)
- *   public/favicon.svg           favicon (même pastille, optimisée 16 px)
+ *   public/brand/mark.svg        marque adaptative (currentColor)
+ *   public/brand/mark-light.svg  marque sombre  (<img>, e-mails)
+ *   public/brand/mark-dark.svg   marque claire
+ *   public/brand/app-icon.svg    icône carrée, marque ajustée au cadre
+ *   public/favicon.svg           favicon (suit `prefers-color-scheme`)
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -26,10 +28,7 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = path.join(root, 'public', 'brand');
 
-const SOURCES = {
-  noir: path.join(root, 'super_photo_noir.svg'),
-  blanc: path.join(root, 'super_photo_blanc.svg'),
-};
+const SOURCE = path.join(root, 'super_photo_blanc.svg');
 
 function step(message) {
   process.stdout.write(`\u2022 ${message}\n`);
@@ -138,27 +137,6 @@ function boundingBox(shapes) {
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
-function renderShapes(shapes, { ink, knockout }) {
-  return shapes
-    .map((shape) => {
-      const isLight = shape.fill === '#FFFFFF' || shape.fill === '#FFF';
-      const isDark = shape.fill === '#000000' || shape.fill === '#000';
-      const paint = isLight ? knockout : isDark ? ink : ink;
-      const geometry = shape.tag === 'path'
-        ? `d="${/d="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`
-        : shape.tag === 'polygon'
-          ? `points="${/points="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`
-          : shape.attrs.trim();
-      const extra = shape.tag === 'circle'
-        ? `r="${/r="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`
-        : shape.tag === 'rect'
-          ? `width="${/width="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}" height="${/height="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`
-          : '';
-      return `    <${shape.tag} ${shape.tag === 'path' ? geometry : `${geometry} ${extra}`.trim()} fill="${paint}"/>`;
-    })
-    .join('\n');
-}
-
 /** Géométrie seule d'une forme, sans attribut de remplissage. */
 function geometryOf(shape) {
   if (shape.tag === 'path') return `d="${/d="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`;
@@ -179,31 +157,32 @@ function geometryOf(shape) {
 /**
  * Marque sur fond **transparent**.
  *
- * Le logo est un jeu d'hexagones imbriqués séparés par des anneaux. Dans les
- * exports Illustrator, ces anneaux sont peints avec la couleur du fond
- * (noir sur la version claire) : c'est ce qui donne l'illusion d'un détourage.
- * Sur un fond transparent, peindre un anneau ne creuse rien — il faut donc un
- * masque : les anneaux deviennent des trous réels, et la marque se pose sur
- * n'importe quel fond sans pastille.
+ * L'ordre de peinture officiel est : feuille 1, anneau 1, feuille 2, anneau 2…
+ * chaque anneau étant peint par-dessus tout ce qui précède. Un masque unique
+ * appliqué à la fin creuserait donc les anneaux à travers *toutes* les feuilles,
+ * y compris celles qui doivent repeindre par-dessus — d'où des bords dentelés.
+ *
+ * On reproduit l'empilement réel avec des groupes imbriqués :
+ *   G1 = masque(anneau 1)[ feuille 1 ]
+ *   Gn = masque(anneau n)[ G(n-1), feuille n ]
+ * Le résultat est identique à l'export Illustrator, mais sans couleur de fond.
  */
-function transparentMark(inkShapes, ringShapes, ink, { fillMode = 'mask' } = {}) {
-  const maskId = 'sp-knockout';
-  const rings = ringShapes
-    .map((shape) => `      <${shape.tag} ${geometryOf(shape)} fill="#000"/>`)
-    .join('\n');
-  const inkBody = inkShapes
-    .map((shape) => `    <${shape.tag} ${geometryOf(shape)} fill="${ink}"/>`)
-    .join('\n');
-  if (fillMode === 'none') return inkBody;
-  return `  <defs>
-    <mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="${ARTBOARD}" height="${ARTBOARD}">
+function knockoutMark(sheets, ink, { idPrefix = 'sp-ko' } = {}) {
+  const mask = (ring, index) => `    <mask id="${idPrefix}-${index}" maskUnits="userSpaceOnUse" x="0" y="0" width="${ARTBOARD}" height="${ARTBOARD}">
       <rect x="0" y="0" width="${ARTBOARD}" height="${ARTBOARD}" fill="#fff"/>
-${rings}
-    </mask>
-  </defs>
-  <g mask="url(#${maskId})">
-${inkBody}
-  </g>`;
+      <${ring.tag} ${geometryOf(ring)} fill="#000"/>
+    </mask>`;
+
+  const layer = (index) => {
+    const sheet = sheets[index];
+    const upper = index === 0 ? [] : [layer(index - 1)];
+    upper.push(`  <${sheet.ink.tag} ${geometryOf(sheet.ink)} fill="${ink}"/>`);
+    const inner = upper.join('\n').replace(/^/gm, '  ');
+    return `<g mask="url(#${idPrefix}-${index + 1})">\n${inner}\n</g>`;
+  };
+
+  const body = layer(sheets.length - 1).replace(/^/gm, '    ');
+  return `  <defs>\n${sheets.map((sheet, index) => mask(sheet.ring, index + 1)).join('\n')}\n  </defs>\n${body}`;
 }
 
 function svgDocument({ viewBox, body, width, extra = '' }) {
@@ -217,14 +196,15 @@ function trim(value) {
   return Number(value.toFixed(2));
 }
 
-const noir = await readFile(SOURCES.noir, 'utf8');
-const blanc = await readFile(SOURCES.blanc, 'utf8');
+const source = await readFile(SOURCE, 'utf8').catch(() => {
+  process.stderr.write('\u2716 super_photo_blanc.svg introuvable à la racine du projet.\n');
+  process.exit(1);
+});
 
-const noirShapes = extractShapes(noir);
-const blancShapes = extractShapes(blanc);
-step(`noir : ${noirShapes.length} formes · blanc : ${blancShapes.length} formes`);
-if (noirShapes.length === 0) {
-  process.stderr.write('\u2716 Aucune forme visible trouvée dans super_photo_noir.svg\n');
+const shapes = extractShapes(source);
+step(`super_photo_blanc.svg : ${shapes.length} formes visibles`);
+if (shapes.length === 0) {
+  process.stderr.write('\u2716 Aucune forme visible trouvée dans super_photo_blanc.svg\n');
   process.exit(1);
 }
 
@@ -234,14 +214,20 @@ const ARTBOARD = 500;
 const viewBox = `0 0 ${ARTBOARD} ${ARTBOARD}`;
 step(`plan de travail : ${viewBox}`);
 
-// Structure officielle du logo : les hexagones sont des `<polygon>` (l'encre),
-// les séparations sont des `<path>` peints avec la couleur du fond (la
-// « plaque »). Sur fond transparent, ces séparations doivent devenir de vrais
-// trous : on se fie donc au type de forme, pas à la couleur, car le fichier
-// « noir » laisse les polygones sans attribut `fill` (noir par défaut).
-const INK = noirShapes.filter((shape) => shape.tag === 'polygon' || shape.tag === 'rect' || shape.tag === 'circle');
-const RINGS = noirShapes.filter((shape) => shape.tag === 'path');
-step(`encre : ${INK.length} formes · détourages : ${RINGS.length} anneaux`);
+// Structure officielle du logo : les feuilles sont des `<polygon>` (l'encre),
+// les séparations sont des `<path>` peints avec la couleur du fond. On se fie
+// au type de forme et non à la couleur : dans l'export « blanc », les polygones
+// sont explicitement blancs et les anneaux n'ont aucun `fill`.
+const INK = shapes.filter((shape) => shape.tag === 'polygon' || shape.tag === 'rect' || shape.tag === 'circle');
+const RINGS = shapes.filter((shape) => shape.tag === 'path');
+step(`encre : ${INK.length} feuilles · détourages : ${RINGS.length} anneaux`);
+if (INK.length !== RINGS.length) {
+  process.stderr.write('\u2716 Feuilles et anneaux ne se correspondent pas — vérifiez le SVG source.\n');
+  process.exit(1);
+}
+
+/** Feuilles appariées à leur anneau, dans l'ordre de peinture. */
+const SHEETS = INK.map((ink, index) => ({ ink, ring: RINGS[index] }));
 
 /**
  * Cadre serré autour de la marque : les icônes occupent toute la surface
@@ -259,7 +245,7 @@ function fitTransform(shapes, padding = 0.03) {
 
 /** Marque mise à l'échelle pour remplir le carré de l'icône. */
 function fittedIcon(ink, { padding = 0.03 } = {}) {
-  const body = transparentMark(INK, RINGS, ink);
+  const body = knockoutMark(SHEETS, ink);
   const transform = fitTransform(INK, padding);
   return `  <g transform="${transform}">
 ${body.replace(/^/gm, '  ')}
@@ -268,24 +254,24 @@ ${body.replace(/^/gm, '  ')}
 
 await mkdir(outDir, { recursive: true });
 
-// Marque adaptative : la silhouette suit `currentColor`, les anneaux creusent
-// de vrais trous (masque) — aucun fond, aucune pastille.
+// Marque adaptative : les feuilles suivent `currentColor`, les anneaux creusent
+// de vrais trous (masques) — aucun fond, aucune pastille.
 await writeFile(
   path.join(outDir, 'mark.svg'),
   svgDocument({
     viewBox,
-    body: `  <title>SuperPhoto</title>\n${transparentMark(INK, RINGS, 'var(--brand-ink, currentColor)')}`,
+    body: `  <title>SuperPhoto</title>\n${knockoutMark(SHEETS, 'var(--brand-ink, currentColor)')}`,
   }),
 );
 
 await writeFile(
   path.join(outDir, 'mark-light.svg'),
-  svgDocument({ viewBox, body: transparentMark(INK, RINGS, '#111114') }),
+  svgDocument({ viewBox, body: knockoutMark(SHEETS, '#111114') }),
 );
 
 await writeFile(
   path.join(outDir, 'mark-dark.svg'),
-  svgDocument({ viewBox, body: transparentMark(INK, RINGS, '#ffffff') }),
+  svgDocument({ viewBox, body: knockoutMark(SHEETS, '#ffffff') }),
 );
 
 // Icône d'application : plus de carré sombre, la marque remplit le cadre.
@@ -320,7 +306,7 @@ await writeFile(
     @media (prefers-color-scheme: dark) { .sp-ink { fill: #ffffff; } }
   </style>
   <g transform="${faviconTransform}">
-${transparentMark(INK, RINGS, 'currentColor')
+${knockoutMark(SHEETS, 'currentColor')
   .replace(/fill="currentColor"/g, 'class="sp-ink"')
   .replace(/^/gm, '    ')}
   </g>
