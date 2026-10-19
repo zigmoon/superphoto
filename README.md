@@ -1,6 +1,6 @@
 # SuperPhoto
 
-<img src="public/brand/readme-mark.png" alt="Logo SuperPhoto" width="88" align="right" />
+<img src=".github/brand-readme.png" alt="Logo SuperPhoto" width="88" align="right" />
 
 **Studio de retouche photographique clair ou sombre, rapide et précis — Astro + Rust (Tauri).**
 
