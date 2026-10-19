@@ -1,6 +1,6 @@
 [package]
 name = "superphoto"
-version = "0.1.1"
+version = "0.1.2"
 description = "SuperPhoto — studio de retouche photographique Astro + Rust"
 authors = ["SuperPhoto"]
 license = "MIT"
@@ -17,6 +17,15 @@ crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[features]
+# Sans cette feature, le binaire est compilé en mode « dev » : il charge
+# `http://localhost:4321` au démarrage au lieu des fichiers embarqués, et
+# affiche ERR_CONNECTION_REFUSED quand aucun serveur Astro ne tourne.
+# `npx tauri build` l'active de lui-même ; un `cargo build` manuel doit la
+# demander explicitement :
+#   cargo build --features custom-protocol
+custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
 tauri = { version = "2", features = [] }

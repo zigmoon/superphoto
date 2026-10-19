@@ -1875,6 +1875,7 @@ export class SuperPhotoEditor {
     byId<HTMLButtonElement>('zoom-out').addEventListener('click', () => this.setZoom(this.zoom / 1.25));
     byId<HTMLButtonElement>('zoom-fit').addEventListener('click', () => this.fitToView());
     byId<HTMLButtonElement>('zoom-value').addEventListener('click', () => this.setZoom(1));
+    this.bindFullscreen();
 
     byId<HTMLButtonElement>('primary-swatch').addEventListener('click', () => {
       byId<HTMLInputElement>('primary-color-input').click();
@@ -3655,6 +3656,41 @@ export class SuperPhotoEditor {
   // Canvas interaction
   // ───────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Plein écran : la même bascule que SuperPrint, mais qui ne dépend pas de
+   * l'API Fullscreen — dans une webview Tauri la touche F11 est aussi gérée
+   * par le système, on évite donc de dupliquer l'appel.
+   */
+  private bindFullscreen(): void {
+    const button = byId<HTMLButtonElement>('btn-fullscreen');
+    const apply = (): void => {
+      const active = Boolean(document.fullscreenElement);
+      button.setAttribute('aria-pressed', String(active));
+      button.title = active ? 'Quitter le plein écran (F11)' : 'Plein écran (F11)';
+      button.setAttribute('aria-label', button.title);
+    };
+    const toggle = (): void => {
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+      } else {
+        void document.documentElement.requestFullscreen().catch(() => {
+          this.toast('Le plein écran est refusé par le système.', 'error');
+        });
+      }
+    };
+    button.addEventListener('click', toggle);
+    document.addEventListener('fullscreenchange', () => {
+      apply();
+      this.invalidateDisplayRect();
+      // Le viewport change de taille : on garde le même cadrage.
+      window.setTimeout(() => {
+        this.invalidateDisplayRect();
+        if (this.fitMode) this.fitToView();
+      }, 60);
+    });
+    apply();
+  }
+
   private bindCanvas(): void {
     this.display.addEventListener('pointerdown', (event) => this.onPointerDown(event));
     window.addEventListener('pointermove', (event) => this.onPointerMove(event));
@@ -5281,6 +5317,11 @@ export class SuperPhotoEditor {
           this.setZoom(this.zoom / 1.25);
           return;
         }
+      }
+      if (event.key === 'F11') {
+        event.preventDefault();
+        byId<HTMLButtonElement>('btn-fullscreen').click();
+        return;
       }
       if (event.code === 'Space' && !this.spaceDown) {
         event.preventDefault();

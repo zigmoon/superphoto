@@ -2,13 +2,9 @@
 import BrandMark from './BrandMark.astro';
 ---
 <header class="topbar">
-  <div class="brand">
+  <div class="brand" aria-label="SuperPhoto">
     <span class="brand-mark" aria-hidden="true">
       <BrandMark decorative />
-    </span>
-    <span class="brand-copy">
-      <strong>SUPERPHOTO</strong>
-      <small>PHOTO STUDIO</small>
     </span>
   </div>
 
@@ -48,19 +44,6 @@ import BrandMark from './BrandMark.astro';
       </button>
       <input type="color" id="primary-color-input" class="native-color" value="#ff8a3d" tabindex="-1" />
       <input type="color" id="secondary-color-input" class="native-color" value="#111114" tabindex="-1" />
-    </div>
-
-    <div class="zoom-cluster" aria-label="Zoom">
-      <button class="tb-icon" id="zoom-out" title="Zoom arrière (Ctrl+-)" aria-label="Zoom arrière">
-        <svg viewBox="0 0 24 24"><use href="#i-minus"></use></svg>
-      </button>
-      <button class="zoom-value" id="zoom-value" title="Zoom 100 % (Ctrl+1)">100 %</button>
-      <button class="tb-icon" id="zoom-in" title="Zoom avant (Ctrl++)" aria-label="Zoom avant">
-        <svg viewBox="0 0 24 24"><use href="#i-plus"></use></svg>
-      </button>
-      <button class="tb-icon" id="zoom-fit" title="Ajuster à la fenêtre (Ctrl+0)" aria-label="Ajuster à la fenêtre">
-        <svg viewBox="0 0 24 24"><use href="#i-fit"></use></svg>
-      </button>
     </div>
 
     <span class="topbar-sep" aria-hidden="true"></span>

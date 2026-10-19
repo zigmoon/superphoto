@@ -396,15 +396,14 @@ html.reduce-motion *::after {
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
   flex: none;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   color: var(--brand-ink);
   flex: none;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.16));
@@ -418,26 +417,6 @@ html.theme-dark .brand-mark {
   width: 100%;
   height: 100%;
   display: block;
-}
-
-.brand-copy {
-  display: flex;
-  flex-direction: column;
-  line-height: 1;
-  gap: 4px;
-}
-
-.brand-copy strong {
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
-
-.brand-copy small {
-  font-family: var(--mono);
-  font-size: 7.5px;
-  letter-spacing: 0.26em;
-  color: var(--text-faint);
 }
 
 .topbar-actions {
@@ -649,41 +628,95 @@ html.theme-dark .theme-toggle .theme-icon-moon {
   pointer-events: none;
 }
 
-.zoom-cluster {
+/* ── Zoom flottant (bas droite de la prévisualisation) ─────────────────── */
+
+.stage-zoom {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 20;
   display: flex;
   align-items: center;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  overflow: hidden;
-  background: var(--bg-base);
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: 0 6px 20px rgba(20, 20, 24, 0.16);
+  backdrop-filter: saturate(1.2) blur(3px);
+  user-select: none;
 }
 
-.zoom-cluster .tb-icon {
-  width: 26px;
-  min-width: 26px;
-  height: 28px;
+html.theme-dark .stage-zoom {
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+
+.stage-zoom-btn {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 26px;
+  padding: 0;
   border: none;
-  border-radius: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  transition: background-color 120ms var(--ease), color 120ms var(--ease);
 }
 
-.zoom-value {
-  min-width: 54px;
-  height: 28px;
+.stage-zoom-btn svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.stage-zoom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.stage-zoom-btn:active {
+  background: var(--bg-raised);
+}
+
+.stage-zoom-value {
+  min-width: 50px;
+  height: 26px;
   padding: 0 4px;
   border: none;
-  border-left: 1px solid var(--line);
-  border-right: 1px solid var(--line);
+  border-radius: 5px;
   background: transparent;
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: 9.5px;
-  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
 }
 
-.zoom-value:hover {
-  background: var(--bg-raised);
+.stage-zoom-value:hover {
+  background: var(--bg-hover);
   color: var(--text);
+}
+
+.stage-zoom-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+#btn-fullscreen .fs-icon-exit {
+  display: none;
+}
+
+html:fullscreen #btn-fullscreen .fs-icon-enter,
+#btn-fullscreen[aria-pressed='true'] .fs-icon-enter {
+  display: none;
+}
+
+html:fullscreen #btn-fullscreen .fs-icon-exit,
+#btn-fullscreen[aria-pressed='true'] .fs-icon-exit {
+  display: block;
 }
 
 /* ── Sidebars ──────────────────────────────────────────────────────────── */
@@ -930,12 +963,18 @@ html.theme-dark .theme-toggle .theme-icon-moon {
 
 .layer-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   align-items: stretch;
   gap: 5px;
   padding: 9px 12px;
   border-top: 1px solid var(--line-soft);
   flex: none;
+}
+
+.layer-action.icon-only {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
 }
 
 .layer-action {

@@ -1,8 +1,21 @@
-# SuperPhoto
+<div align="center">
 
-<img src=".github/brand-readme.png" alt="Logo SuperPhoto" width="88" align="right" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/brand-logo-dark.png">
+  <img src=".github/brand-logo-light.png" alt="SuperPhoto — studio de retouche photographique" width="340">
+</picture>
 
 **Studio de retouche photographique clair ou sombre, rapide et précis — Astro + Rust (Tauri).**
+
+[![Build](https://github.com/zigmoon/superphoto/actions/workflows/build.yml/badge.svg)](https://github.com/zigmoon/superphoto/actions/workflows/build.yml)
+[![Dernière version](https://img.shields.io/github/v/release/zigmoon/superphoto?label=release)](https://github.com/zigmoon/superphoto/releases/latest)
+[![Licence](https://img.shields.io/github/license/zigmoon/superphoto)](LICENSE)
+
+**Windows · macOS · Linux · Web**
+
+</div>
+
+---
 
 SuperPhoto reprend la grammaire visuelle de [SuperPrint](https://superprint.cc/app/index.html) — barres compactes, libellés mono, panneaux à filets fins, toile au centre. Le **thème clair est la palette exacte de SuperPrint** (`#f8f8f8`, `#ffffff`, `#e0e0e0`, `#1a1a1a`, toile `#e8e8e8`) ; le thème sombre est celui du studio photo. Calques à gauche, outils et réglages à droite, image au centre.
 
@@ -213,10 +226,36 @@ npm run build:web:zip                 # dist/ + superphoto-web.zip
 ```bash
 npm run desktop:dev             # Tauri + Astro en mode développement
 npm run desktop:build           # installeurs natifs (Windows/macOS/Linux)
-npm run desktop:build:debug     # binaire debug sans installeur
+npm run desktop:exe             # binaire autonome, sans installeur (assets embarqués)
 ```
 
 La configuration Tauri se trouve dans [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json). Les assets embarqués pointent vers `../dist`.
+
+#### ⚠️ « localhost a refusé de se connecter » au lancement
+
+Cette page d’erreur signifie une seule chose : le binaire a été compilé **en mode dev**
+et cherche le serveur Astro sur `http://localhost:4321` au lieu de charger les fichiers
+embarqués. Tauri décide de cela à la compilation, via la feature `custom-protocol` :
+
+| Commande | Mode | Résultat |
+| --- | --- | --- |
+| `npm run desktop:dev` | dev | ✅ nécessite Astro (`beforeDevCommand` le lance) |
+| `npm run desktop:exe` / `desktop:build` | production | ✅ autonome, aucune dépendance réseau |
+| `cargo build --features custom-protocol` | production | ✅ équivalent, pour un `cargo` manuel |
+| `cargo build` **seul** | dev | ❌ `ERR_CONNECTION_REFUSED` sans serveur Astro |
+
+Si le port 4321 est déjà pris (un `npm run dev` oublié), `astro dev` refuse de démarrer et
+`tauri dev` ouvre la fenêtre sur une page d’erreur : fermez l’autre instance ou lancez
+`npm run dev` séparément, puis `npm run desktop:exe`.
+
+Vérification rapide du binaire produit — l’URL chargée doit être `tauri://localhost`, pas
+`localhost:4321` :
+
+```powershell
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9333'
+.\src-tauri\target\debug\superphoto.exe
+curl.exe -s http://127.0.0.1:9333/json    # "url":"http://tauri.localhost/"
+```
 
 ### Compilation multi-plateforme (GitHub Actions)
 

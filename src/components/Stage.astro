@@ -41,4 +41,25 @@ import BrandMark from './BrandMark.astro';
       </div>
     </div>
   </div>
+
+  <!-- Zoom + plein écran : ancrés en bas à droite de la zone de prévisualisation.
+       Placés dans `.stage` (et non en `position: fixed`), ils suivent donc
+       instantanément l’ouverture ou la fermeture des panneaux latéraux. -->
+  <div class="stage-zoom" id="stage-zoom" aria-label="Zoom et affichage">
+    <button class="stage-zoom-btn" id="zoom-out" title="Zoom arrière (Ctrl+-)" aria-label="Zoom arrière">
+      <svg viewBox="0 0 24 24"><use href="#i-minus"></use></svg>
+    </button>
+    <button class="stage-zoom-value" id="zoom-value" title="Zoom 100 % (Ctrl+1)">100 %</button>
+    <button class="stage-zoom-btn" id="zoom-in" title="Zoom avant (Ctrl++)" aria-label="Zoom avant">
+      <svg viewBox="0 0 24 24"><use href="#i-plus"></use></svg>
+    </button>
+    <span class="stage-zoom-sep" aria-hidden="true"></span>
+    <button class="stage-zoom-btn" id="zoom-fit" title="Ajuster à la fenêtre (Ctrl+0)" aria-label="Ajuster à la fenêtre">
+      <svg viewBox="0 0 24 24"><use href="#i-fit"></use></svg>
+    </button>
+    <button class="stage-zoom-btn" id="btn-fullscreen" title="Plein écran (F11)" aria-label="Passer en plein écran" aria-pressed="false">
+      <svg class="fs-icon-enter" viewBox="0 0 24 24"><use href="#i-fullscreen"></use></svg>
+      <svg class="fs-icon-exit" viewBox="0 0 24 24"><use href="#i-fullscreen-exit"></use></svg>
+    </button>
+  </div>
 </section>
