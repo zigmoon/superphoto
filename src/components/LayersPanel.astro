@@ -1,35 +1,35 @@
-<aside class="sidebar layers-sidebar" id="layers-sidebar" aria-label="Calques">
+<aside class="sidebar layers-sidebar" id="layers-sidebar" aria-label="Layers" data-i18n-aria="layers.title">
   <div class="sidebar-head">
     <div>
-      <span class="eyebrow">Document</span>
-      <h2>Calques</h2>
+      <span class="eyebrow" data-i18n="layers.document">Document</span>
+      <h2 data-i18n="layers.title">Layers</h2>
     </div>
-    <button class="icon-btn accent" id="layer-add" title="Nouveau calque" aria-label="Nouveau calque" disabled>
+    <button class="icon-btn accent" id="layer-add" title="New layer" aria-label="New layer" data-i18n-title="layers.add" data-i18n-aria="layers.add" disabled>
       <svg viewBox="0 0 24 24"><use href="#i-plus"></use></svg>
     </button>
   </div>
 
   <div class="layers-list" id="layers-list" aria-live="polite">
-    <div class="empty-hint">Aucun document ouvert.</div>
+    <div class="empty-hint" data-i18n="layers.empty">No document open.</div>
   </div>
 
-  <div class="layer-actions" role="group" aria-label="Actions sur les calques">
-    <button class="layer-action" id="layer-mask" title="Ajouter un masque de fusion" disabled>
+  <div class="layer-actions" role="group" aria-label="Layer actions">
+    <button class="layer-action" id="layer-mask" title="Add a layer mask" data-i18n-title="layers.addMask" disabled>
       <svg viewBox="0 0 24 24"><use href="#i-mask"></use></svg>
-      <span>Masque</span>
+      <span data-i18n="layers.mask">Mask</span>
     </button>
-    <button class="layer-action" id="layer-duplicate" title="Dupliquer le calque" disabled>
+    <button class="layer-action" id="layer-duplicate" title="Duplicate the layer" data-i18n-title="layers.duplicate" disabled>
       <svg viewBox="0 0 24 24"><use href="#i-duplicate"></use></svg>
-      <span>Dupliquer</span>
+      <span data-i18n="layers.duplicate">Duplicate</span>
     </button>
-    <button class="layer-action danger icon-only" id="layer-delete" title="Supprimer le calque" aria-label="Supprimer le calque" disabled>
+    <button class="layer-action danger icon-only" id="layer-delete" title="Delete the layer" aria-label="Delete the layer" data-i18n-title="layers.delete" data-i18n-aria="layers.delete" disabled>
       <svg viewBox="0 0 24 24"><use href="#i-trash"></use></svg>
     </button>
     <div class="layer-order">
-      <button class="icon-btn" id="layer-up" title="Monter le calque" aria-label="Monter le calque" disabled>
+      <button class="icon-btn" id="layer-up" title="Move layer up" aria-label="Move layer up" data-i18n-title="layers.up" data-i18n-aria="layers.up" disabled>
         <svg viewBox="0 0 24 24"><use href="#i-up"></use></svg>
       </button>
-      <button class="icon-btn" id="layer-down" title="Descendre le calque" aria-label="Descendre le calque" disabled>
+      <button class="icon-btn" id="layer-down" title="Move layer down" aria-label="Move layer down" data-i18n-title="layers.down" data-i18n-aria="layers.down" disabled>
         <svg viewBox="0 0 24 24"><use href="#i-down"></use></svg>
       </button>
     </div>
@@ -37,40 +37,40 @@
 
   <div class="mask-controls" id="mask-controls" hidden>
     <div class="mask-head">
-      <span class="section-title">Masque de fusion</span>
+      <span class="section-title" data-i18n="layers.maskPanel">Layer mask</span>
       <label class="switch-field">
         <input type="checkbox" id="layer-mask-enabled" checked />
-        <span>Actif</span>
+        <span data-i18n="layers.maskActive">Active</span>
       </label>
     </div>
     <div class="button-row">
-      <button class="btn ghost sm" id="layer-mask-edit">Peindre le masque</button>
-      <button class="btn ghost sm" id="layer-mask-apply">Appliquer</button>
-      <button class="btn ghost sm" id="layer-mask-delete">Supprimer</button>
+      <button class="btn ghost sm" id="layer-mask-edit" data-i18n="layers.paintMask">Paint the mask</button>
+      <button class="btn ghost sm" id="layer-mask-apply" data-i18n="layers.applyMask">Apply</button>
+      <button class="btn ghost sm" id="layer-mask-delete" data-i18n="layers.removeMask">Remove</button>
     </div>
-    <p class="mask-hint">Peignez en clair pour révéler, en sombre pour masquer.</p>
+    <p class="mask-hint" data-i18n="layers.maskHint">Paint light to reveal, dark to hide.</p>
   </div>
 
   <div class="panel-section">
-    <div class="section-title">Propriétés</div>
-    <label class="field-label" for="layer-name">Nom du calque</label>
-    <input type="text" id="layer-name" class="text-input" placeholder="Calque" disabled />
+    <div class="section-title" data-i18n="layers.properties">Properties</div>
+    <label class="field-label" for="layer-name" data-i18n="layers.name">Layer name</label>
+    <input type="text" id="layer-name" class="text-input" placeholder="Layer" data-i18n-placeholder="layers.placeholder" disabled />
 
     <div class="range-field compact">
-      <span>Opacité</span>
+      <span data-i18n="layers.opacity">Opacity</span>
       <output id="layer-opacity-value">100 %</output>
       <input type="range" id="layer-opacity" min="0" max="100" step="1" value="100" disabled />
     </div>
 
-    <label class="field-label" for="layer-blend">Mode de fusion</label>
+    <label class="field-label" for="layer-blend" data-i18n="layers.blend">Blend mode</label>
     <select id="layer-blend" class="select-input" disabled></select>
   </div>
 
   <div class="document-card">
-    <div class="section-title">Informations</div>
-    <div class="doc-row"><span>Taille</span><strong id="doc-size">—</strong></div>
-    <div class="doc-row"><span>Résolution</span><strong id="doc-dpi">—</strong></div>
-    <div class="doc-row"><span>Calques</span><strong id="doc-layers">—</strong></div>
-    <div class="doc-note">SuperPhoto · RVB 8 bits · sRGB</div>
+    <div class="section-title" data-i18n="layers.info">Information</div>
+    <div class="doc-row"><span data-i18n="layers.size">Size</span><strong id="doc-size">—</strong></div>
+    <div class="doc-row"><span data-i18n="layers.resolution">Resolution</span><strong id="doc-dpi">—</strong></div>
+    <div class="doc-row"><span data-i18n="layers.count">Layers</span><strong id="doc-layers">—</strong></div>
+    <div class="doc-note" data-i18n="layers.profile">RGB 8-bit · sRGB</div>
   </div>
 </aside>

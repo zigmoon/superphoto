@@ -7,10 +7,13 @@ import { canvasContext, createCanvas } from './utils';
  * Les calques sont stockés en PNG (Blob) dans IndexedDB : pas de base64, pas de
  * limite de 5 Mo comme `localStorage`, et la sérialisation passe par `toBlob`
  * qui n'immobilise pas l'interface (contrairement à `toDataURL`).
+ *
+ * La session contient **tous les onglets ouverts** et l'onglet actif. Les
+ * sessions version 1 (un seul document) restent lisibles.
  */
 
 const DB_NAME = 'superphoto';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'sessions';
 const KEY = 'current';
 
@@ -29,7 +32,24 @@ export interface SessionLayer {
   mask: Blob | null;
 }
 
+export interface SessionDocument {
+  name: string;
+  width: number;
+  height: number;
+  dpi: number;
+  background: PhotoDoc['background'];
+  activeLayerId: string;
+  layers: SessionLayer[];
+}
+
 export interface SessionSnapshot {
+  version: 2;
+  savedAt: number;
+  activeIndex: number;
+  documents: SessionDocument[];
+}
+
+interface LegacySnapshot {
   version: 1;
   savedAt: number;
   name: string;
@@ -92,7 +112,7 @@ export function isSessionAvailable(): boolean {
   return typeof indexedDB !== 'undefined';
 }
 
-export async function saveSession(doc: PhotoDoc): Promise<SessionSnapshot> {
+async function serializeDocument(doc: PhotoDoc): Promise<SessionDocument> {
   const layers: SessionLayer[] = [];
   for (const layer of doc.layers) {
     layers.push({
@@ -110,9 +130,7 @@ export async function saveSession(doc: PhotoDoc): Promise<SessionSnapshot> {
       mask: layer.mask ? await canvasToBlob(layer.mask) : null,
     });
   }
-  const snapshot: SessionSnapshot = {
-    version: 1,
-    savedAt: Date.now(),
+  return {
     name: doc.name,
     width: doc.width,
     height: doc.height,
@@ -121,18 +139,58 @@ export async function saveSession(doc: PhotoDoc): Promise<SessionSnapshot> {
     activeLayerId: doc.activeLayerId,
     layers,
   };
+}
+
+export async function saveSession(docs: PhotoDoc[], activeIndex = 0): Promise<SessionSnapshot> {
+  const documents: SessionDocument[] = [];
+  for (const doc of docs) documents.push(await serializeDocument(doc));
+  const snapshot: SessionSnapshot = {
+    version: 2,
+    savedAt: Date.now(),
+    activeIndex: Math.min(Math.max(0, activeIndex), Math.max(0, documents.length - 1)),
+    documents,
+  };
   await withStore('readwrite', (store) => store.put(snapshot, KEY));
   return snapshot;
+}
+
+function upgrade(raw: SessionSnapshot | LegacySnapshot | undefined): SessionSnapshot | null {
+  if (!raw) return null;
+  const modern = raw as SessionSnapshot;
+  if (modern.version === 2 && Array.isArray(modern.documents)) {
+    if (modern.documents.length === 0) return null;
+    return {
+      ...modern,
+      activeIndex: Math.min(Math.max(0, modern.activeIndex ?? 0), modern.documents.length - 1),
+    };
+  }
+  const legacy = raw as LegacySnapshot;
+  if (!Array.isArray(legacy.layers) || legacy.layers.length === 0) return null;
+  return {
+    version: 2,
+    savedAt: legacy.savedAt ?? Date.now(),
+    activeIndex: 0,
+    documents: [
+      {
+        name: legacy.name,
+        width: legacy.width,
+        height: legacy.height,
+        dpi: legacy.dpi,
+        background: legacy.background,
+        activeLayerId: legacy.activeLayerId,
+        layers: legacy.layers,
+      },
+    ],
+  };
 }
 
 export async function loadSession(): Promise<SessionSnapshot | null> {
   if (!isSessionAvailable()) return null;
   try {
-    const snapshot = await withStore<SessionSnapshot | undefined>('readonly', (store) =>
+    const stored = await withStore<SessionSnapshot | LegacySnapshot | undefined>('readonly', (store) =>
       store.get(KEY),
     );
-    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.layers)) return null;
-    return snapshot;
+    return upgrade(stored);
   } catch {
     return null;
   }
@@ -147,7 +205,7 @@ export async function clearSession(): Promise<void> {
   }
 }
 
-export async function restoreDocument(snapshot: SessionSnapshot): Promise<PhotoDoc> {
+export async function restoreDocument(snapshot: SessionDocument): Promise<PhotoDoc> {
   const layers: Layer[] = [];
   for (const stored of snapshot.layers) {
     const canvas = await blobToCanvas(stored.image, snapshot.width, snapshot.height);
@@ -183,7 +241,7 @@ export async function restoreDocument(snapshot: SessionSnapshot): Promise<PhotoD
 
 export function formatSessionTime(timestamp: number): string {
   try {
-    return new Date(timestamp).toLocaleTimeString('fr-FR', {
+    return new Date(timestamp).toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
     });

@@ -11,6 +11,11 @@ AddDefaultCharset UTF-8
   AddType text/javascript .js
   AddType application/json .map
   AddType application/manifest+json .webmanifest
+  # Projet SuperPhoto : sans cela, un `.sps` déposé sur le serveur serait servi
+  # en `application/octet-stream` (l'ouverture fonctionne quand même).
+  AddType application/x-superphoto .sps
+  AddType video/mp4 .mp4
+  AddType video/webm .webm
 </IfModule>
 
 <IfModule mod_deflate.c>

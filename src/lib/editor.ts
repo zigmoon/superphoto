@@ -25,7 +25,7 @@ import {
   extensionForMime,
   isTauri,
   mimeForFormat,
-  openImage,
+  openImages,
   readNativeImage,
   sanitizeFilename,
   saveExport,
@@ -54,6 +54,19 @@ import {
   type RenderQuality,
   type ThemeMode,
 } from './preferences';
+import {
+  LANGUAGE_EVENT,
+  applyStaticTranslations,
+  currentLanguage,
+  initLanguage,
+  saveLanguage,
+  setLanguage,
+  t,
+  tValue,
+  type Lang,
+} from './i18n';
+import { decodeMedia, isSupportedMedia } from './media';
+import { looksLikeProject, parseProject, serializeProject, SPS_MIME } from './project';
 import { magicWandSelection } from './selection';
 import {
   clearSession,
@@ -146,148 +159,68 @@ type DragState =
     };
 
 interface ToolInfo {
-  label: string;
   shortcut: string;
   cursor: string;
-  hint: string;
 }
 
+type ExportFormat = 'png' | 'jpeg' | 'webp' | 'sps';
+
 const TOOLS: Record<ToolId, ToolInfo> = {
-  select: {
-    label: 'Sélection',
-    shortcut: 'V',
-    cursor: 'default',
-    hint: 'Cliquez pour choisir un calque, glissez pour déplacer son contenu.',
-  },
-  marquee: {
-    label: 'Zone de sélection',
-    shortcut: 'M',
-    cursor: 'crosshair',
-    hint: 'Tracez une zone pour limiter les réglages et les tracés.',
-  },
-  'magic-wand': {
-    label: 'Baguette magique',
-    shortcut: 'W',
-    cursor: 'crosshair',
-    hint: 'Cliquez pour sélectionner les pixels de couleur proche. Maj ajoute à la sélection.',
-  },
-  pencil: {
-    label: 'Crayon',
-    shortcut: 'N',
-    cursor: 'crosshair',
-    hint: 'Trace net, sans lissage. Alt active la gomme.',
-  },
-  brush: {
-    label: 'Pinceau',
-    shortcut: 'B',
-    cursor: 'crosshair',
-    hint: 'Peignez avec le pinceau. Alt active la gomme.',
-  },
-  eraser: {
-    label: 'Gomme',
-    shortcut: 'E',
-    cursor: 'crosshair',
-    hint: 'Efface les pixels du calque (ou révèle le masque si vous peignez dessus).',
-  },
-  stamp: {
-    label: 'Tampon',
-    shortcut: 'S',
-    cursor: 'crosshair',
-    hint: 'Alt+clic définit la source, puis peignez pour cloner.',
-  },
-  patch: {
-    label: 'Pièce',
-    shortcut: 'J',
-    cursor: 'crosshair',
-    hint: 'Tracez la zone à réparer, puis glissez-la sur une zone propre.',
-  },
-  heal: {
-    label: 'Correcteur',
-    shortcut: 'K',
-    cursor: 'crosshair',
-    hint: 'Peignez sur une petite tache : le voisinage est ramené dessus.',
-  },
-  spotlight: {
-    label: 'Point lumineux',
-    shortcut: 'L',
-    cursor: 'crosshair',
-    hint: 'Cliquez pour éclairer une zone, glissez depuis le centre pour régler son rayon.',
-  },
-  crop: {
-    label: 'Recadrage',
-    shortcut: 'C',
-    cursor: 'crosshair',
-    hint: 'Tracez le nouveau cadre, puis validez avec Entrée.',
-  },
-  shapes: {
-    label: 'Objets',
-    shortcut: 'U',
-    cursor: 'crosshair',
-    hint: 'Glissez pour dessiner une forme. Choisissez le type dans les options.',
-  },
-  pen: {
-    label: 'Plume',
-    shortcut: 'P',
-    cursor: 'crosshair',
-    hint: 'Cliquez pour poser un point, glissez pour courber. Entrée termine le tracé.',
-  },
-  text: {
-    label: 'Texte',
-    shortcut: 'T',
-    cursor: 'text',
-    hint: 'Cliquez sur la toile pour créer un bloc de texte.',
-  },
-  eyedropper: {
-    label: 'Pipette',
-    shortcut: 'I',
-    cursor: 'crosshair',
-    hint: 'Cliquez pour prélever une couleur (Alt : couleur secondaire).',
-  },
-  gradient: {
-    label: 'Dégradé',
-    shortcut: 'G',
-    cursor: 'crosshair',
-    hint: 'Glissez pour définir la direction et l’étendue du dégradé.',
-  },
-  zoom: {
-    label: 'Zoom',
-    shortcut: 'Z',
-    cursor: 'zoom-in',
-    hint: 'Cliquez pour agrandir, Alt+clic pour réduire.',
-  },
-  hand: {
-    label: 'Main',
-    shortcut: 'H',
-    cursor: 'grab',
-    hint: 'Glissez pour déplacer la vue. Espace active la main temporairement.',
-  },
+  select: { shortcut: 'V', cursor: 'default' },
+  marquee: { shortcut: 'M', cursor: 'crosshair' },
+  'magic-wand': { shortcut: 'W', cursor: 'crosshair' },
+  pencil: { shortcut: 'N', cursor: 'crosshair' },
+  brush: { shortcut: 'B', cursor: 'crosshair' },
+  eraser: { shortcut: 'E', cursor: 'crosshair' },
+  stamp: { shortcut: 'S', cursor: 'crosshair' },
+  patch: { shortcut: 'J', cursor: 'crosshair' },
+  heal: { shortcut: 'K', cursor: 'crosshair' },
+  spotlight: { shortcut: 'L', cursor: 'crosshair' },
+  crop: { shortcut: 'C', cursor: 'crosshair' },
+  shapes: { shortcut: 'U', cursor: 'crosshair' },
+  pen: { shortcut: 'P', cursor: 'crosshair' },
+  text: { shortcut: 'T', cursor: 'text' },
+  eyedropper: { shortcut: 'I', cursor: 'crosshair' },
+  gradient: { shortcut: 'G', cursor: 'crosshair' },
+  zoom: { shortcut: 'Z', cursor: 'zoom-in' },
+  hand: { shortcut: 'H', cursor: 'grab' },
 };
 
-const BLEND_OPTIONS: Array<{ value: BlendMode; label: string }> = [
-  { value: 'source-over', label: 'Normal' },
-  { value: 'multiply', label: 'Produit' },
-  { value: 'screen', label: 'Écran' },
-  { value: 'overlay', label: 'Incrustation' },
-  { value: 'darken', label: 'Obscurcir' },
-  { value: 'lighten', label: 'Éclaircir' },
-  { value: 'color-dodge', label: 'Densité +' },
-  { value: 'color-burn', label: 'Densité −' },
-  { value: 'hard-light', label: 'Lumière crue' },
-  { value: 'soft-light', label: 'Lumière douce' },
-  { value: 'difference', label: 'Différence' },
-  { value: 'exclusion', label: 'Exclusion' },
-  { value: 'hue', label: 'Teinte' },
-  { value: 'saturation', label: 'Saturation' },
-  { value: 'color', label: 'Couleur' },
-  { value: 'luminosity', label: 'Luminosité' },
+/** Libellé et aide de l'outil, dans la langue courante. */
+function toolLabel(id: ToolId): string {
+  return t(`tool.${id}.label`);
+}
+
+function toolHint(id: ToolId): string {
+  return t(`tool.${id}.hint`);
+}
+
+const BLEND_MODES: BlendMode[] = [
+  'source-over',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
 ];
 
-const KIND_LABELS: Record<Layer['kind'], string> = {
-  raster: 'Pixel',
-  text: 'Texte',
-  shape: 'Objet',
-  path: 'Tracé',
-};
+function kindLabel(kind: Layer['kind']): string {
+  return tValue('kind', kind);
+}
+
+function blendLabel(value: BlendMode): string {
+  return tValue('blend', value);
+}
 
 const SMOOTHING_QUALITY: Record<RenderQuality, ImageSmoothingQuality> = {
   fast: 'low',
@@ -310,7 +243,7 @@ const FONT_FAMILIES = [
 
 function byId<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
-  if (!node) throw new Error(`Élément #${id} introuvable`);
+  if (!node) throw new Error(t('err.missingElement', { id }));
   return node as T;
 }
 
@@ -355,15 +288,31 @@ function scaleSelection(selection: Selection, scale: number): Selection {
 const MAX_PREVIEW_EDGE = 1800;
 const PREVIEW_MIN_INTERVAL = 42;
 
+/**
+ * Un onglet de document. Chaque onglet garde son historique, sa sélection et
+ * son cadrage : passer de l'un à l'autre ne casse rien et ne redessine que la
+ * toile visible.
+ */
+interface DocTab {
+  id: string;
+  doc: PhotoDoc;
+  history: History;
+  selection: Selection | null;
+  zoom: number;
+  fitMode: boolean;
+  scroll: { left: number; top: number } | null;
+  maskCache: { key: string; mask: SelectionMask } | null;
+  coverageCache: { key: string; data: Uint8ClampedArray } | null;
+}
+
 export class SuperPhotoEditor {
-  private doc: PhotoDoc | null = null;
-  private history: History;
+  private tabs: DocTab[] = [];
+  private activeTabId = '';
+  private fallbackHistory = new History(() => {});
+  private fallbackSelection: Selection | null = null;
+  private fallbackZoom = 1;
+  private fallbackFit = true;
   private activeTool: ToolId = 'select';
-  private zoom = 1;
-  private fitMode = true;
-  private selectionState: Selection | null = null;
-  private selectionMaskCache: { key: string; mask: SelectionMask } | null = null;
-  private adjustmentMaskCache: { key: string; data: Uint8ClampedArray } | null = null;
   private pendingCrop: Rect | null = null;
   private drag: DragState | null = null;
   private adjustment: AdjustmentState | null = null;
@@ -382,19 +331,58 @@ export class SuperPhotoEditor {
   private preferences: Preferences = loadPreferences();
   private preferencesSnapshot: Preferences | null = null;
 
+  // ── Onglets ──────────────────────────────────────────────────────────────
+
+  private get tab(): DocTab | null {
+    return this.tabs.find((item) => item.id === this.activeTabId) ?? null;
+  }
+
+  private get doc(): PhotoDoc | null {
+    return this.tab?.doc ?? null;
+  }
+
+  private get history(): History {
+    return this.tab?.history ?? this.fallbackHistory;
+  }
+
+  private get zoom(): number {
+    return this.tab?.zoom ?? this.fallbackZoom;
+  }
+
+  private set zoom(value: number) {
+    const tab = this.tab;
+    if (tab) tab.zoom = value;
+    else this.fallbackZoom = value;
+  }
+
+  private get fitMode(): boolean {
+    return this.tab?.fitMode ?? this.fallbackFit;
+  }
+
+  private set fitMode(value: boolean) {
+    const tab = this.tab;
+    if (tab) tab.fitMode = value;
+    else this.fallbackFit = value;
+  }
+
   /**
-   * La sélection invalide ses caches de contour progressif dès qu'elle change :
-   * le masque flou n'est calculé qu'une fois par sélection.
+   * La sélection invalide les caches de contour progressif de son onglet dès
+   * qu'elle change : le masque flou n'est calculé qu'une fois par sélection.
    */
   private get selection(): Selection | null {
-    return this.selectionState;
+    return this.tab ? this.tab.selection : this.fallbackSelection;
   }
 
   private set selection(value: Selection | null) {
-    if (value !== this.selectionState) {
-      this.selectionState = value;
-      this.selectionMaskCache = null;
-      this.adjustmentMaskCache = null;
+    const tab = this.tab;
+    if (!tab) {
+      this.fallbackSelection = value;
+      return;
+    }
+    if (value !== tab.selection) {
+      tab.selection = value;
+      tab.maskCache = null;
+      tab.coverageCache = null;
     }
   }
 
@@ -446,6 +434,7 @@ export class SuperPhotoEditor {
   private selectionFeather = 0;
   private spotlight = { diameter: 420, intensity: 55, softness: 60 };
   private canvasMenu: HTMLElement | null = null;
+  private refreshBlendOptions: (() => void) | null = null;
   private stampSource: Point | null = null;
   private patchSourceRect: Rect | null = null;
   private autosaveTimer = 0;
@@ -461,7 +450,7 @@ export class SuperPhotoEditor {
   private resizeRatioLock = true;
   private resizeRatio = 1;
   private resizeAnchor = { x: 0.5, y: 0.5 };
-  private exportFormat: 'png' | 'jpeg' | 'webp' = 'png';
+  private exportFormat: ExportFormat = 'png';
   private saving = false;
 
   private readonly app: HTMLElement;
@@ -493,14 +482,20 @@ export class SuperPhotoEditor {
     this.preferencesModal = byId('preferences-modal');
     this.toastHost = byId('toast-host');
 
+    initLanguage();
+    applyStaticTranslations(document);
     applyPreferences(this.preferences);
     watchSystemTheme();
     window.addEventListener('resize', () => this.invalidateDisplayRect(), { passive: true });
-    this.viewport.addEventListener('scroll', () => this.invalidateDisplayRect(), { passive: true });
-
-    this.history = new History(() => this.syncChrome());
+    this.viewport.addEventListener('scroll', () => {
+      this.invalidateDisplayRect();
+      const tab = this.tab;
+      if (tab) tab.scroll = { left: this.viewport.scrollLeft, top: this.viewport.scrollTop };
+    }, { passive: true });
 
     this.bindTopbar();
+    this.bindTabs();
+    this.bindLanguage();
     this.bindToolRail();
     this.bindLayersPanel();
     this.bindCanvas();
@@ -588,7 +583,7 @@ export class SuperPhotoEditor {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Document lifecycle
+  // Document lifecycle / onglets
   // ───────────────────────────────────────────────────────────────────────────
 
   private createNewDocument(width: number, height: number, dpi: number, background: PhotoDoc['background']): void {
@@ -597,25 +592,66 @@ export class SuperPhotoEditor {
       Math.round(height),
       Math.round(dpi),
       background,
-      'Sans titre',
+      t('new.untitled'),
     );
-    this.applyDocument(doc);
+    this.openTab(doc);
     this.closeNewDocumentDialog();
     this.setTool('select');
-    this.setMessage(`Nouveau document ${doc.width} × ${doc.height} px`);
+    this.setMessage(t('msg.newDocument', { w: doc.width, h: doc.height }));
   }
 
-  private applyDocument(doc: PhotoDoc): void {
+  /** Crée un onglet pour un document et l'active. */
+  private openTab(doc: PhotoDoc, activate = true): DocTab {
+    const tab: DocTab = {
+      id: `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      doc,
+      history: new History(() => {
+        if (this.activeTabId === tab.id) this.syncChrome();
+      }),
+      selection: null,
+      zoom: 1,
+      fitMode: true,
+      scroll: null,
+      maskCache: null,
+      coverageCache: null,
+    };
+    this.tabs.push(tab);
+    this.renderTabs();
+    if (activate) this.activateTab(tab.id, { skipSave: true });
+    return tab;
+  }
+
+  /**
+   * Bascule d'onglet : on mémorise le défilement de celui qu'on quitte, on
+   * remet en place le décor du nouveau, puis on redessine. Aucun calque n'est
+   * copié : chaque onglet possède déjà ses canvas.
+   */
+  private activateTab(tabId: string, options: { skipSave?: boolean } = {}): void {
+    const next = this.tabs.find((item) => item.id === tabId);
+    if (!next) return;
+    const previous = this.tab;
+    if (previous && !options.skipSave) {
+      previous.scroll = { left: this.viewport.scrollLeft, top: this.viewport.scrollTop };
+    }
+    if (previous?.id === next.id && options.skipSave !== true) {
+      /* Réactivation du même onglet : rien à reconstruire. */
+    }
     this.cancelAdjustment();
-    this.doc = doc;
-    this.selection = null;
+    this.closeCanvasMenu();
+    this.activeTabId = next.id;
+    this.drag = null;
     this.pendingCrop = null;
     this.patchSourceRect = null;
     this.stampSource = null;
-    this.drag = null;
+    this.pointerInside = false;
+    this.adjustment = null;
+    this.textEditBefore.clear();
+    this.layersDirty = true;
+    this.layerOrderSignature = '';
     this.statusCache.clear();
     this.invalidateDisplayRect();
-    this.history.clear();
+
+    const doc = next.doc;
     this.display.width = doc.width;
     this.display.height = doc.height;
     this.overlay.setAttribute('viewBox', `0 0 ${doc.width} ${doc.height}`);
@@ -623,10 +659,100 @@ export class SuperPhotoEditor {
     this.overlay.setAttribute('height', String(doc.height));
     this.canvasStack.style.display = 'block';
     this.emptyState.hidden = true;
-    this.fitToView();
+    if (next.scroll) this.applyZoom();
+    else this.fitToView();
+    this.renderTabs();
     this.renderAll();
     this.renderToolOptions();
+    this.syncChrome();
+    if (next.scroll) {
+      window.requestAnimationFrame(() => {
+        this.viewport.scrollLeft = next.scroll?.left ?? 0;
+        this.viewport.scrollTop = next.scroll?.top ?? 0;
+      });
+    }
   }
+
+  private closeTab(tabId: string): void {
+    const index = this.tabs.findIndex((item) => item.id === tabId);
+    if (index < 0) return;
+    if (this.adjustment && this.tab?.id === tabId) this.cancelAdjustment();
+    this.tabs.splice(index, 1);
+    if (this.tabs.length === 0) {
+      this.activeTabId = '';
+      this.drag = null;
+      this.pendingCrop = null;
+      this.patchSourceRect = null;
+      this.stampSource = null;
+      this.selection = null;
+      this.history.clear();
+      this.canvasStack.style.display = 'none';
+      this.emptyState.hidden = false;
+      this.overlay.innerHTML = '';
+      this.statusCache.clear();
+      this.renderTabs();
+      this.renderLayers();
+      this.renderToolOptions();
+      this.syncChrome();
+      this.scheduleAutosave(200);
+      return;
+    }
+    if (this.activeTabId === tabId) {
+      const neighbour = this.tabs[Math.min(index, this.tabs.length - 1)];
+      this.activeTabId = '';
+      if (neighbour) this.activateTab(neighbour.id, { skipSave: true });
+    }
+    this.renderTabs();
+    this.scheduleAutosave(200);
+  }
+
+
+
+  private renderTabs(): void {
+    const host = document.getElementById('doc-tabs');
+    if (!host) return;
+    host.textContent = '';
+    if (this.tabs.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'doc-tabs-empty';
+      empty.dataset.i18n = 'tabs.none';
+      empty.textContent = t('tabs.none');
+      host.appendChild(empty);
+      return;
+    }
+    for (const tab of this.tabs) {
+      const active = tab.id === this.activeTabId;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `doc-tab${active ? ' is-active' : ''}`;
+      button.dataset.tabId = tab.id;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(active));
+      button.title = `${tab.doc.name} · ${tab.doc.width} × ${tab.doc.height} px`;
+
+      const label = document.createElement('span');
+      label.className = 'doc-tab-name';
+      label.textContent = tab.doc.name;
+      button.appendChild(label);
+
+      const meta = document.createElement('span');
+      meta.className = 'doc-tab-meta';
+      meta.textContent = `${tab.doc.width}×${tab.doc.height}`;
+      button.appendChild(meta);
+
+      const close = document.createElement('span');
+      close.className = 'doc-tab-close';
+      close.dataset.tabClose = tab.id;
+      close.setAttribute('role', 'button');
+      close.setAttribute('aria-label', t('tabs.close', { name: tab.doc.name }));
+      close.title = t('tabs.close', { name: tab.doc.name });
+      close.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-close"></use></svg>';
+      button.appendChild(close);
+
+      host.appendChild(button);
+    }
+  }
+
 
   // ───────────────────────────────────────────────────────────────────────────
   // Session / sauvegarde automatique
@@ -658,18 +784,18 @@ export class SuperPhotoEditor {
   }
 
   private async runAutosave(): Promise<void> {
-    const doc = this.doc;
-    if (!this.preferences.autosave || !doc || this.autosaveState === 'saving') return;
+    if (!this.preferences.autosave || this.tabs.length === 0 || this.autosaveState === 'saving') return;
     this.autosaveState = 'saving';
     this.syncAutosaveBadge();
     try {
-      await saveSession(doc);
+      const activeIndex = Math.max(0, this.tabs.findIndex((item) => item.id === this.activeTabId));
+      await saveSession(this.tabs.map((item) => item.doc), activeIndex);
       this.autosaveState = 'saved';
       this.autosaveAt = Date.now();
       this.lastSessionAt = this.autosaveAt;
     } catch (error) {
       this.autosaveState = 'error';
-      console.warn('Sauvegarde automatique impossible', error);
+      console.warn('Automatic save unavailable', error);
     }
     this.syncAutosaveBadge();
   }
@@ -683,27 +809,27 @@ export class SuperPhotoEditor {
       if (text) {
         text.textContent =
           state === 'off'
-            ? 'Auto off'
+            ? t('status.autoOff')
             : state === 'saving'
-              ? 'Enregistrement…'
+              ? t('status.saving')
               : state === 'error'
-                ? 'Auto indisponible'
+                ? t('status.unavailable')
                 : state === 'saved'
-                  ? `Enregistré ${formatSessionTime(this.autosaveAt)}`
-                  : 'Auto';
+                  ? t('status.saved', { time: formatSessionTime(this.autosaveAt) })
+                  : t('status.auto');
       }
       host.title =
         state === 'off'
-          ? 'Sauvegarde automatique désactivée (Préférences)'
+          ? t('status.autosaveOff')
           : state === 'saved'
-            ? 'Session enregistrée dans le navigateur'
-            : 'Sauvegarde automatique';
+            ? t('status.autosaveOn')
+            : t('status.autosaveTitle');
     }
     const sessionHint = document.getElementById('prefs-session-state');
     if (sessionHint) {
       sessionHint.textContent = this.lastSessionAt
-        ? `Dernière sauvegarde : ${formatSessionTime(this.lastSessionAt)}`
-        : 'Aucune session enregistrée pour l’instant.';
+        ? t('prefs.lastSave', { time: formatSessionTime(this.lastSessionAt) })
+        : t('prefs.none');
     }
   }
 
@@ -714,14 +840,21 @@ export class SuperPhotoEditor {
         this.syncAutosaveBadge();
         return false;
       }
-      const doc = await restoreDocument(snapshot);
+      const docs: PhotoDoc[] = [];
+      for (const stored of snapshot.documents) docs.push(await restoreDocument(stored));
+      if (docs.length === 0) {
+        this.syncAutosaveBadge();
+        return false;
+      }
       this.lastSessionAt = snapshot.savedAt;
-      this.applyDocument(doc);
+      docs.forEach((doc, index) => this.openTab(doc, index === snapshot.activeIndex));
+      if (snapshot.activeIndex !== this.tabs.length - 1) this.activateTab(this.tabs[snapshot.activeIndex]?.id ?? '');
       this.autosaveState = 'saved';
       this.autosaveAt = snapshot.savedAt;
       this.syncAutosaveBadge();
-      this.setMessage(`Session restaurée · ${formatSessionTime(snapshot.savedAt)}`);
-      this.toast(`Session restaurée · ${formatSessionTime(snapshot.savedAt)}`, 'success');
+      const time = formatSessionTime(snapshot.savedAt);
+      this.setMessage(t('msg.sessionRestored', { time }));
+      this.toast(t('msg.sessionRestored', { time }), 'success');
       return true;
     } catch {
       this.syncAutosaveBadge();
@@ -1214,7 +1347,7 @@ export class SuperPhotoEditor {
 
   private syncChrome(): void {
     const doc = this.doc;
-    this.setText('doc-name', doc?.name ?? 'Aucun document');
+    this.setText('doc-name', doc?.name ?? t('tabs.none'));
     this.setText(
       'doc-meta',
       doc ? `${doc.width} × ${doc.height} px · ${Math.round(doc.dpi)} ppp` : '—',
@@ -1227,8 +1360,8 @@ export class SuperPhotoEditor {
     const redo = this.node<HTMLButtonElement>('btn-redo');
     undo.disabled = !this.history.canUndo;
     redo.disabled = !this.history.canRedo;
-    undo.title = this.history.canUndo ? `Annuler : ${this.history.undoLabel}` : 'Annuler (Ctrl+Z)';
-    redo.title = this.history.canRedo ? `Rétablir : ${this.history.redoLabel}` : 'Rétablir (Ctrl+Y)';
+    undo.title = this.history.canUndo ? t('topbar.undoNamed', { name: this.history.undoLabel }) : t('topbar.undoTitle');
+    redo.title = this.history.canRedo ? t('topbar.redoNamed', { name: this.history.redoLabel }) : t('topbar.redoTitle');
 
     this.node<HTMLButtonElement>('btn-export').disabled = !doc;
     this.node<HTMLButtonElement>('btn-open').disabled = false;
@@ -1337,7 +1470,7 @@ export class SuperPhotoEditor {
     const doc = this.doc;
     if (!doc) {
       if (this.layerRows.size > 0 || !this.layersList.querySelector('.empty-hint')) {
-        this.layersList.innerHTML = '<div class="empty-hint">Aucun document ouvert.</div>';
+        this.layersList.innerHTML = `<div class="empty-hint">${escapeHtml(t('layers.empty'))}</div>`;
         this.layerRows.clear();
         this.layerOrderSignature = '';
       }
@@ -1370,7 +1503,7 @@ export class SuperPhotoEditor {
           eye.dataset.state = state;
           eye.classList.toggle('is-off', !layer.visible);
           eye.innerHTML = icon(layer.visible ? 'eye' : 'eye-off');
-          eye.title = layer.visible ? 'Masquer le calque' : 'Afficher le calque';
+          eye.title = layer.visible ? t('layers.hide') : t('layers.show');
           eye.setAttribute('aria-label', eye.title);
         }
       }
@@ -1381,7 +1514,7 @@ export class SuperPhotoEditor {
         name.title = layer.name;
       }
       const kind = row.querySelector<HTMLElement>('.layer-kind');
-      const kindText = `${KIND_LABELS[layer.kind]} · ${Math.round(layer.opacity * 100)} %`;
+      const kindText = `${kindLabel(layer.kind)} · ${Math.round(layer.opacity * 100)} %`;
       if (kind && kind.textContent !== kindText) kind.textContent = kindText;
 
       const slot = row.querySelector<HTMLElement>('.layer-mask-slot');
@@ -1395,7 +1528,7 @@ export class SuperPhotoEditor {
           slot.classList.toggle('is-disabled', layer.maskEnabled === false);
           slot.title =
             layer.maskEnabled === false
-              ? 'Masque désactivé — cliquer pour le réactiver'
+              ? t('msg.maskOff')
               : layer.maskEditing
                 ? 'Vous peignez le masque — cliquer pour revenir aux pixels'
                 : 'Cliquer pour peindre le masque';
@@ -1441,8 +1574,7 @@ export class SuperPhotoEditor {
   }
 
   private updateStatus(): void {
-    const info = TOOLS[this.activeTool];
-    this.setText('status-tool', info.label);
+    this.setText('status-tool', toolLabel(this.activeTool));
     this.setText(
       'status-pos',
       this.preferences.coordinates && this.pointerInside
@@ -1457,16 +1589,23 @@ export class SuperPhotoEditor {
         this.selection.type === 'poly'
           ? selectionRings(this.selection).reduce((total, ring) => total + ring.length, 0)
           : 0;
+      const rounded = { w: Math.round(bounds.w), h: Math.round(bounds.h) };
       this.setText(
         'status-selection',
-        `Sélection · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px${points ? ` · ${points} pts` : ''}${feather ? ` · contour ${feather} px` : ''}`,
+        feather
+          ? points
+            ? t('status.featherPoints', { ...rounded, n: points, f: feather })
+            : t('status.feather', { ...rounded, f: feather })
+          : points
+            ? t('status.selectionPoints', { ...rounded, n: points })
+            : t('status.selection', rounded),
       );
     } else {
-      this.setText('status-selection', 'Aucune sélection');
+      this.setText('status-selection', t('status.noSelection'));
     }
-    this.setText('tool-hint', info.hint);
+    this.setText('tool-hint', toolHint(this.activeTool));
     const layer = this.activeLayer;
-    this.setText('status-layer', layer ? `Calque : ${layer.name}` : 'Aucun calque');
+    this.setText('status-layer', layer ? t('status.layer', { name: layer.name }) : t('status.noLayer'));
   }
 
   private syncCoordinatesVisibility(): void {
@@ -1482,7 +1621,7 @@ export class SuperPhotoEditor {
     node.textContent = message;
     window.clearTimeout((this as unknown as { messageTimer?: number }).messageTimer);
     (this as unknown as { messageTimer?: number }).messageTimer = window.setTimeout(() => {
-      node.textContent = 'Prêt';
+      node.textContent = t('status.ready');
     }, timeout);
   }
 
@@ -1530,16 +1669,16 @@ export class SuperPhotoEditor {
     const body = byId('tool-options-body');
     const title = byId('tool-options-title');
     if (this.adjustment) {
-      title.textContent = ADJUSTMENT_TITLES[this.adjustment.id];
+      title.textContent = t("adjust." + this.adjustment.id);
       body.innerHTML = this.adjustmentOptionsHtml();
       if (this.adjustment.id === 'curves') this.wireCurveEditor();
       return;
     }
-    title.textContent = TOOLS[this.activeTool].label;
+    title.textContent = toolLabel(this.activeTool);
     if (!this.doc) {
       body.innerHTML = `<div class="options-empty">
-        <p>Aucun document ouvert.</p>
-        <button class="btn primary sm" data-action="new-document">Créer un document</button>
+        <p>${t('opt.noDocument')}</p>
+        <button class="btn primary sm" data-action="new-document">${t('opt.createDocument')}</button>
       </div>`;
       return;
     }
@@ -1592,7 +1731,7 @@ export class SuperPhotoEditor {
         body.innerHTML = this.zoomOptionsHtml();
         break;
       case 'hand':
-        body.innerHTML = `<p class="options-hint">Glissez dans la toile pour vous déplacer. La barre d’espace active la main à tout moment.</p>`;
+        body.innerHTML = `<p class="options-hint">${escapeHtml(t('tool.hand.options'))}</p>`;
         break;
     }
   }
@@ -1600,43 +1739,43 @@ export class SuperPhotoEditor {
   private selectOptionsHtml(): string {
     const layer = this.activeLayer;
     return `
-      <p class="options-hint">${escapeHtml(TOOLS.select.hint)}</p>
+      <p class="options-hint">${escapeHtml(toolHint('select'))}</p>
       <div class="option-card">
-        <span class="option-card-label">Calque actif</span>
+        <span class="option-card-label">${escapeHtml(t('opt.activeLayer'))}</span>
         <strong>${layer ? escapeHtml(layer.name) : '—'}</strong>
-        <span class="option-card-sub">${layer ? KIND_LABELS[layer.kind] : 'Sélectionnez un calque'}</span>
+        <span class="option-card-sub">${layer ? kindLabel(layer.kind) : escapeHtml(t('opt.pickLayer'))}</span>
       </div>
       ${this.featherFieldHtml()}
       <div class="button-row">
-        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>Remplir</button>
-        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
+        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.fill'))}</button>
+        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.deselect'))}</button>
       </div>
-      <p class="options-hint">Le contour progressif s’applique aux sélections suivantes. Clic droit dans la toile : remplir, effacer, inverser.</p>`;
+      <p class="options-hint">${escapeHtml(t('opt.featherScope'))}</p>`;
   }
 
   private marqueeOptionsHtml(): string {
     const mode = this.marqueeMode;
     return `
       <div class="segmented" data-marquee-mode>
-        <button data-marquee="rect" class="${mode === 'rect' ? 'is-active' : ''}">Rectangle</button>
-        <button data-marquee="ellipse" class="${mode === 'ellipse' ? 'is-active' : ''}">Ellipse</button>
-        <button data-marquee="lasso" class="${mode === 'lasso' ? 'is-active' : ''}">Lasso</button>
+        <button data-marquee="rect" class="${mode === 'rect' ? 'is-active' : ''}">${escapeHtml(t('opt.rect'))}</button>
+        <button data-marquee="ellipse" class="${mode === 'ellipse' ? 'is-active' : ''}">${escapeHtml(t('opt.ellipse'))}</button>
+        <button data-marquee="lasso" class="${mode === 'lasso' ? 'is-active' : ''}">${escapeHtml(t('opt.lasso'))}</button>
       </div>
       ${this.featherFieldHtml()}
       <div class="button-row">
-        <button class="btn ghost sm" data-action="select-all">Tout sélectionner</button>
-        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
-        <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>Inverser</button>
-        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>Remplir</button>
+        <button class="btn ghost sm" data-action="select-all">${escapeHtml(t('opt.selectAll'))}</button>
+        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.deselect'))}</button>
+        <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.invert'))}</button>
+        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.fill'))}</button>
       </div>
-      <p class="options-hint">${this.selection ? 'Les réglages et tracés sont limités à la sélection. Clic droit dans la toile : remplir la sélection.' : 'Aucune sélection : les outils agissent sur tout le calque.'}</p>`;
+      <p class="options-hint">${escapeHtml(this.selection ? t('opt.selectionHint') : t('opt.noSelection'))}</p>`;
   }
 
-  /** Contour progressif, partagé par la zone de sélection et la baguette. */
+  /** Feather radius, shared by the marquee and the magic wand. */
   private featherFieldHtml(): string {
     const feather = Math.round(this.selectionFeather);
     return `
-      <label class="range-field">Contour progressif <output data-feather-output>${feather} px</output>
+      <label class="range-field">${escapeHtml(t('opt.feather'))} <output data-feather-output>${feather} px</output>
         <input type="range" min="0" max="120" step="1" data-feather-field value="${feather}">
       </label>`;
   }
@@ -1644,61 +1783,73 @@ export class SuperPhotoEditor {
   private wandOptionsHtml(): string {
     const wand = this.wand;
     return `
-      <label class="range-field">Tolérance <output data-wand-output="tolerance">${wand.tolerance}</output>
+      <label class="range-field">${escapeHtml(t('opt.tolerance'))} <output data-wand-output="tolerance">${wand.tolerance}</output>
         <input type="range" min="0" max="128" step="1" data-wand-field="tolerance" value="${wand.tolerance}">
       </label>
-      <label class="check-field"><input type="checkbox" data-wand-field="contiguous" ${wand.contiguous ? 'checked' : ''}> Zones contiguës</label>
-      <label class="check-field"><input type="checkbox" data-wand-field="merged" ${wand.merged ? 'checked' : ''}> Échantillonner l’image composée</label>
+      <label class="check-field"><input type="checkbox" data-wand-field="contiguous" ${wand.contiguous ? 'checked' : ''}> ${escapeHtml(t('opt.contiguous'))}</label>
+      <label class="check-field"><input type="checkbox" data-wand-field="merged" ${wand.merged ? 'checked' : ''}> ${escapeHtml(t('opt.sampleMerged'))}</label>
       ${this.featherFieldHtml()}
       <div class="button-row">
-        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
-        <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>Inverser</button>
-        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>Remplir</button>
+        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.deselect'))}</button>
+        <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.invert'))}</button>
+        <button class="btn ghost sm" data-action="fill-selection" ${this.selection ? '' : 'disabled'}>${escapeHtml(t('opt.fill'))}</button>
       </div>
-      <p class="options-hint">${escapeHtml(TOOLS['magic-wand'].hint)}</p>`;
+      <p class="options-hint">${escapeHtml(toolHint('magic-wand'))}</p>`;
   }
 
   private spotlightOptionsHtml(): string {
     const spot = this.spotlight;
     return `
-      <label class="range-field">Diamètre <output data-spot-output="diameter">${Math.round(spot.diameter)} px</output>
+      <label class="range-field">${escapeHtml(t('opt.diameter'))} <output data-spot-output="diameter">${Math.round(spot.diameter)} px</output>
         <input type="range" min="20" max="2400" step="10" data-spot-field="diameter" value="${spot.diameter}">
       </label>
-      <label class="range-field">Intensité <output data-spot-output="intensity">${spot.intensity} %</output>
+      <label class="range-field">${escapeHtml(t('opt.intensity'))} <output data-spot-output="intensity">${spot.intensity} %</output>
         <input type="range" min="1" max="100" step="1" data-spot-field="intensity" value="${spot.intensity}">
       </label>
-      <label class="range-field">Douceur <output data-spot-output="softness">${spot.softness} %</output>
+      <label class="range-field">${escapeHtml(t('opt.softness'))} <output data-spot-output="softness">${spot.softness} %</output>
         <input type="range" min="0" max="100" step="1" data-spot-field="softness" value="${spot.softness}">
       </label>
-      <p class="options-hint">${escapeHtml(TOOLS.spotlight.hint)} La sélection, si elle existe, limite la lumière.</p>`;
+      <p class="options-hint">${escapeHtml(t('opt.spotHint'))}</p>`;
   }
 
   private paintTargetHtml(): string {
     const layer = this.activeLayer;
     if (!layer) return '';
+    const label = escapeHtml(t('opt.target'));
     return layer.mask && layer.maskEditing
-      ? `<div class="option-card"><span class="option-card-label">Cible</span><strong>Masque · ${escapeHtml(layer.name)}</strong><span class="option-card-sub">Clair révèle · sombre masque</span></div>`
-      : `<div class="option-card"><span class="option-card-label">Cible</span><strong>Pixels · ${escapeHtml(layer.name)}</strong><span class="option-card-sub">${KIND_LABELS[layer.kind]}</span></div>`;
+      ? `<div class="option-card"><span class="option-card-label">${label}</span><strong>${escapeHtml(t('opt.maskTarget', { name: layer.name }))}</strong><span class="option-card-sub">${escapeHtml(t('opt.maskTargetHint'))}</span></div>`
+      : `<div class="option-card"><span class="option-card-label">${label}</span><strong>${escapeHtml(t('opt.pixelsTarget', { name: layer.name }))}</strong><span class="option-card-sub">${kindLabel(layer.kind)}</span></div>`;
+  }
+
+  private brushSlidersHtml(brush: BrushSettings, { min = 1, max = 600 } = {}): string {
+    return `
+      <label class="range-field">${escapeHtml(t('opt.size'))} <output data-paint-output="size">${brush.size} px</output>
+        <input type="range" min="${min}" max="${max}" step="1" data-paint-field="size" value="${Math.min(max, brush.size)}">
+      </label>
+      <label class="range-field">${escapeHtml(t('opt.hardness'))} <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
+        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
+      </label>
+      <label class="range-field">${escapeHtml(t('opt.opacity'))} <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
+        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
+      </label>`;
   }
 
   private paintOptionsHtml(): string {
     const brush = this.brush;
     if (this.activeTool === 'pencil') {
       return `
-        <label class="range-field">Épaisseur <output data-paint-output="pencilSize">${this.pencilOptions.size} px</output>
+        <label class="range-field">${escapeHtml(t('opt.thickness'))} <output data-paint-output="pencilSize">${this.pencilOptions.size} px</output>
           <input type="range" min="1" max="48" step="1" data-paint-field="pencilSize" value="${this.pencilOptions.size}">
         </label>
-        <label class="range-field">Opacité <output data-paint-output="pencilOpacity">${this.pencilOptions.opacity} %</output>
+        <label class="range-field">${escapeHtml(t('opt.opacity'))} <output data-paint-output="pencilOpacity">${this.pencilOptions.opacity} %</output>
           <input type="range" min="1" max="100" step="1" data-paint-field="pencilOpacity" value="${this.pencilOptions.opacity}">
         </label>
         ${this.paintTargetHtml()}
-        <p class="options-hint">Trait net, sans lissage. Alt active la gomme, Maj trace une ligne droite.</p>`;
+        <p class="options-hint">${escapeHtml(toolHint('pencil'))}</p>`;
     }
     const erase = this.activeTool === 'eraser';
     return `
-      <label class="range-field">Taille <output data-paint-output="size">${brush.size} px</output>
-        <input type="range" min="1" max="600" step="1" data-paint-field="size" value="${brush.size}">
-      </label>
+      ${this.brushSlidersHtml(brush)}
       <div class="segmented" data-brush-presets>
         <button data-brush-size="8">8</button>
         <button data-brush-size="24">24</button>
@@ -1706,77 +1857,55 @@ export class SuperPhotoEditor {
         <button data-brush-size="120">120</button>
         <button data-brush-size="280">280</button>
       </div>
-      <label class="range-field">Dureté <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
-        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
-      </label>
-      <label class="range-field">Opacité <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
-        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
-      </label>
-      <label class="range-field">Espacement <output data-paint-output="spacing">${Math.round(brush.spacing * 100)} %</output>
+      <label class="range-field">${escapeHtml(t('opt.spacing'))} <output data-paint-output="spacing">${Math.round(brush.spacing * 100)} %</output>
         <input type="range" min="2" max="80" step="1" data-paint-field="spacing" value="${Math.round(brush.spacing * 100)}">
       </label>
       ${this.paintTargetHtml()}
-      <p class="options-hint">${erase ? 'La gomme efface les pixels ; sur un masque, elle masque la zone.' : 'Alt active la gomme. [ et ] changent la taille du pinceau.'}</p>`;
+      <p class="options-hint">${escapeHtml(erase ? toolHint('eraser') : t('opt.brushHint'))}</p>`;
   }
 
   private stampOptionsHtml(): string {
     const brush = this.brush;
     const source = this.stampSource;
     return `
-      <label class="range-field">Taille <output data-paint-output="size">${brush.size} px</output>
-        <input type="range" min="1" max="600" step="1" data-paint-field="size" value="${brush.size}">
-      </label>
-      <label class="range-field">Dureté <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
-        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
-      </label>
-      <label class="range-field">Opacité <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
-        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
-      </label>
-      <label class="check-field"><input type="checkbox" data-patch-field="corrector" ${this.patchOptions.corrector ? 'checked' : ''}> Correcteur : harmoniser les couleurs</label>
+      ${this.brushSlidersHtml(brush)}
+      <label class="check-field"><input type="checkbox" data-patch-field="corrector" ${this.patchOptions.corrector ? 'checked' : ''}> ${escapeHtml(t('opt.correctorHint'))}</label>
       <div class="option-card">
-        <span class="option-card-label">Source</span>
-        <strong>${source ? `x ${Math.round(source.x)} · y ${Math.round(source.y)}` : 'Non définie'}</strong>
-        <span class="option-card-sub">Alt+clic sur l’image pour la définir</span>
+        <span class="option-card-label">${escapeHtml(t('opt.source'))}</span>
+        <strong>${source ? escapeHtml(t('opt.sourceSet', { x: Math.round(source.x), y: Math.round(source.y) })) : escapeHtml(t('common.undefined'))}</strong>
+        <span class="option-card-sub">${escapeHtml(t('opt.sourceUnset'))}</span>
       </div>
       ${this.paintTargetHtml()}
-      <p class="options-hint">${escapeHtml(TOOLS.stamp.hint)}</p>`;
+      <p class="options-hint">${escapeHtml(toolHint('stamp'))}</p>`;
   }
 
   private patchOptionsHtml(): string {
     const rect = this.patchSourceRect;
     return `
-      <label class="check-field"><input type="checkbox" data-patch-field="corrector" ${this.patchOptions.corrector ? 'checked' : ''}> Correcteur : harmoniser les couleurs</label>
+      <label class="check-field"><input type="checkbox" data-patch-field="corrector" ${this.patchOptions.corrector ? 'checked' : ''}> ${escapeHtml(t('opt.correctorHint'))}</label>
       <div class="option-card">
-        <span class="option-card-label">Zone à réparer</span>
-        <strong>${rect ? `${Math.round(rect.w)} × ${Math.round(rect.h)} px` : 'Aucune'}</strong>
-        <span class="option-card-sub">${rect ? 'Glissez la zone sur une zone propre' : 'Tracez d’abord la zone à réparer'}</span>
+        <span class="option-card-label">${escapeHtml(t('opt.patchArea'))}</span>
+        <strong>${rect ? `${Math.round(rect.w)} × ${Math.round(rect.h)} px` : escapeHtml(t('common.noneF'))}</strong>
+        <span class="option-card-sub">${escapeHtml(rect ? t('opt.patchReadyText') : t('opt.patchEmpty'))}</span>
       </div>
       <div class="button-row">
-        <button class="btn ghost sm" data-action="clear-patch" ${rect ? '' : 'disabled'}>Annuler la zone</button>
+        <button class="btn ghost sm" data-action="clear-patch" ${rect ? '' : 'disabled'}>${escapeHtml(t('opt.clear'))}</button>
       </div>
-      <p class="options-hint">Sans correcteur, la zone propre est copiée telle quelle ; avec, sa couleur moyenne est ajustée à celle de la zone réparée.</p>`;
+      <p class="options-hint">${escapeHtml(t('opt.patchHint'))}</p>`;
   }
 
   private healOptionsHtml(): string {
     const brush = this.brush;
     return `
-      <label class="range-field">Taille <output data-paint-output="size">${brush.size} px</output>
-        <input type="range" min="4" max="300" step="1" data-paint-field="size" value="${Math.min(300, brush.size)}">
-      </label>
-      <label class="range-field">Dureté <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
-        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
-      </label>
-      <label class="range-field">Opacité <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
-        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
-      </label>
+      ${this.brushSlidersHtml(brush, { min: 4, max: 300 })}
       ${this.paintTargetHtml()}
-      <p class="options-hint">Le correcteur ramène le voisinage immédiat sur la tache : idéal pour un capteur sale, une poussière, un petit défaut de peau.</p>`;
+      <p class="options-hint">${escapeHtml(toolHint('heal'))}</p>`;
   }
 
   private cropOptionsHtml(): string {
     const ratios = [
-      { value: '', label: 'Libre' },
-      { value: '1', label: 'Carré 1:1' },
+      { value: '', label: t('opt.free') },
+      { value: '1', label: t('opt.square11') },
       { value: '1.333333', label: '4:3' },
       { value: '1.777778', label: '16:9' },
       { value: '1.5', label: '3:2' },
@@ -1784,45 +1913,45 @@ export class SuperPhotoEditor {
     ];
     const current = this.cropRatio === null ? '' : String(this.cropRatio);
     return `
-      <label class="field-label">Format
+      <label class="field-label">${escapeHtml(t('opt.ratio'))}
         <select data-crop-ratio>
-          ${ratios.map((ratio) => `<option value="${ratio.value}" ${ratio.value === current ? 'selected' : ''}>${ratio.label}</option>`).join('')}
+          ${ratios.map((ratio) => `<option value="${ratio.value}" ${ratio.value === current ? 'selected' : ''}>${escapeHtml(ratio.label)}</option>`).join('')}
         </select>
       </label>
       <div class="button-row">
-        <button class="btn primary sm" data-action="apply-crop" ${this.pendingCrop ? '' : 'disabled'}>Appliquer</button>
-        <button class="btn ghost sm" data-action="cancel-crop" ${this.pendingCrop ? '' : 'disabled'}>Annuler</button>
+        <button class="btn primary sm" data-action="apply-crop" ${this.pendingCrop ? '' : 'disabled'}>${escapeHtml(t('common.apply'))}</button>
+        <button class="btn ghost sm" data-action="cancel-crop" ${this.pendingCrop ? '' : 'disabled'}>${escapeHtml(t('common.cancel'))}</button>
       </div>
-      <p class="options-hint">Tracez le cadre sur l’image, puis validez avec Entrée.</p>`;
+      <p class="options-hint">${escapeHtml(toolHint('crop'))}</p>`;
   }
 
   private shapesOptionsHtml(): string {
     const options = this.shapeOptions;
     return `
-      <label class="field-label">Objet
+      <label class="field-label">${escapeHtml(t('opt.shapeType'))}
         <select data-shape-field="type">
           ${[
-            ['rectangle', 'Rectangle'],
-            ['ellipse', 'Ellipse'],
-            ['triangle', 'Triangle'],
-            ['star', 'Étoile'],
-            ['line', 'Ligne'],
+            { value: 'rectangle', label: t('opt.rect') },
+            { value: 'ellipse', label: t('opt.ellipse') },
+            { value: 'triangle', label: t('opt.triangle') },
+            { value: 'star', label: t('opt.star') },
+            { value: 'line', label: t('opt.line') },
           ]
-            .map(([value, label]) => `<option value="${value}" ${options.type === value ? 'selected' : ''}>${label}</option>`)
+            .map((item) => `<option value="${item.value}" ${options.type === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
             .join('')}
         </select>
       </label>
       <div class="dual-colors">
-        <label class="color-field"><span>Remplissage</span><input type="color" data-shape-field="fill" value="${options.fill}"></label>
-        <label class="color-field"><span>Contour</span><input type="color" data-shape-field="stroke" value="${options.stroke}"></label>
+        <label class="color-field"><span>${escapeHtml(t('opt.fillColor'))}</span><input type="color" data-shape-field="fill" value="${options.fill}"></label>
+        <label class="color-field"><span>${escapeHtml(t('opt.strokeColor'))}</span><input type="color" data-shape-field="stroke" value="${options.stroke}"></label>
       </div>
-      <label class="range-field">Épaisseur du contour <output data-shape-output="strokeWidth">${options.strokeWidth} px</output>
+      <label class="range-field">${escapeHtml(t('opt.strokeWidth'))} <output data-shape-output="strokeWidth">${options.strokeWidth} px</output>
         <input type="range" min="0" max="40" step="1" data-shape-field="strokeWidth" value="${options.strokeWidth}">
       </label>
-      <label class="range-field">Rayon des angles <output data-shape-output="radius">${options.radius} px</output>
+      <label class="range-field">${escapeHtml(t('opt.radius'))} <output data-shape-output="radius">${options.radius} px</output>
         <input type="range" min="0" max="120" step="1" data-shape-field="radius" value="${options.radius}">
       </label>
-      <label class="check-field"><input type="checkbox" data-shape-field="newLayer" ${options.newLayer ? 'checked' : ''}> Dessiner sur un nouveau calque</label>`;
+      <label class="check-field"><input type="checkbox" data-shape-field="newLayer" ${options.newLayer ? 'checked' : ''}> ${escapeHtml(t('opt.newLayer'))}</label>`;
   }
 
   private penOptionsHtml(): string {
@@ -1830,22 +1959,22 @@ export class SuperPhotoEditor {
     const path = layer?.path;
     return `
       <div class="button-row">
-        <button class="btn primary sm" data-action="new-path">Nouveau tracé</button>
-        <button class="btn ghost sm" data-action="close-path" ${path && path.anchors.length > 1 ? '' : 'disabled'}>Fermer</button>
-        <button class="btn ghost sm" data-action="delete-anchor" ${path && path.anchors.length > 0 ? '' : 'disabled'}>Dernier point</button>
+        <button class="btn primary sm" data-action="new-path">${escapeHtml(t('opt.newPath'))}</button>
+        <button class="btn ghost sm" data-action="close-path" ${path && path.anchors.length > 1 ? '' : 'disabled'}>${escapeHtml(t('opt.closePath'))}</button>
+        <button class="btn ghost sm" data-action="delete-anchor" ${path && path.anchors.length > 0 ? '' : 'disabled'}>${escapeHtml(t('opt.deleteAnchor'))}</button>
       </div>
       <div class="dual-colors">
-        <label class="check-field"><input type="checkbox" data-path-field="fillEnabled" ${path?.fill ? 'checked' : ''}> Remplissage</label>
-        <label class="color-field"><span>Couleur</span><input type="color" data-path-field="fill" value="${path?.fill ?? this.primaryColor}"></label>
+        <label class="check-field"><input type="checkbox" data-path-field="fillEnabled" ${path?.fill ? 'checked' : ''}> ${escapeHtml(t('opt.fillColor'))}</label>
+        <label class="color-field"><span>${escapeHtml(t('adjust.color'))}</span><input type="color" data-path-field="fill" value="${path?.fill ?? this.primaryColor}"></label>
       </div>
       <div class="dual-colors">
-        <label class="check-field"><input type="checkbox" data-path-field="strokeEnabled" ${path?.stroke ? 'checked' : ''}> Contour</label>
-        <label class="color-field"><span>Couleur</span><input type="color" data-path-field="stroke" value="${path?.stroke ?? this.primaryColor}"></label>
+        <label class="check-field"><input type="checkbox" data-path-field="strokeEnabled" ${path?.stroke ? 'checked' : ''}> ${escapeHtml(t('opt.strokeColor'))}</label>
+        <label class="color-field"><span>${escapeHtml(t('adjust.color'))}</span><input type="color" data-path-field="stroke" value="${path?.stroke ?? this.primaryColor}"></label>
       </div>
-      <label class="range-field">Épaisseur <output>${Math.round(path?.strokeWidth ?? this.pathOptions.strokeWidth)} px</output>
+      <label class="range-field">${escapeHtml(t('opt.thickness'))} <output>${Math.round(path?.strokeWidth ?? this.pathOptions.strokeWidth)} px</output>
         <input type="range" min="1" max="40" step="1" data-path-field="strokeWidth" value="${Math.round(path?.strokeWidth ?? this.pathOptions.strokeWidth)}">
       </label>
-      <p class="options-hint">${path ? `${path.anchors.length} point(s) · cliquez sur le premier point pour fermer le tracé.` : 'Cliquez sur la toile pour commencer un tracé Bézier.'}</p>`;
+      <p class="options-hint">${escapeHtml(path ? t('opt.pathHint', { n: path.anchors.length }) : t('tool.pen.hint'))}</p>`;
   }
 
   private textOptionsHtml(): string {
@@ -1856,80 +1985,80 @@ export class SuperPhotoEditor {
     const weight = text?.fontWeight ?? this.textOptions.fontWeight;
     const align = text?.align ?? this.textOptions.align;
     return `
-      <label class="field-label">Contenu
-        <textarea data-text-field="content" rows="4" placeholder="Votre texte…">${escapeHtml(text?.content ?? '')}</textarea>
+      <label class="field-label">${escapeHtml(t('opt.content'))}
+        <textarea data-text-field="content" rows="4" placeholder="${escapeHtml(t('opt.placeholder'))}">${escapeHtml(text?.content ?? '')}</textarea>
       </label>
       <div class="inline-fields">
-        <label class="field-label">Police
+        <label class="field-label">${escapeHtml(t('opt.font'))}
           <select data-text-field="fontFamily">
             ${FONT_FAMILIES.map((font) => `<option value="${font}" ${font === family ? 'selected' : ''}>${font}</option>`).join('')}
           </select>
         </label>
-        <label class="field-label">Taille
+        <label class="field-label">${escapeHtml(t('opt.size'))}
           <input type="number" min="4" max="800" step="1" data-text-field="fontSize" value="${Math.round(size)}">
         </label>
       </div>
       <div class="inline-fields">
-        <label class="field-label">Graisse
+        <label class="field-label">${escapeHtml(t('opt.weight'))}
           <select data-text-field="fontWeight">
             ${[300, 400, 500, 600, 700, 800, 900].map((value) => `<option value="${value}" ${value === weight ? 'selected' : ''}>${value}</option>`).join('')}
           </select>
         </label>
-        <label class="field-label">Couleur
+        <label class="field-label">${escapeHtml(t('adjust.color'))}
           <input type="color" data-text-field="color" value="${text?.color ?? this.primaryColor}">
         </label>
       </div>
       <div class="segmented" data-text-align>
         ${(['left', 'center', 'right'] as const)
-          .map((value) => `<button data-align="${value}" class="${align === value ? 'is-active' : ''}">${value === 'left' ? 'Gauche' : value === 'center' ? 'Centre' : 'Droite'}</button>`)
+          .map((value) => `<button data-align="${value}" class="${align === value ? 'is-active' : ''}">${escapeHtml(t(`opt.${value}`))}</button>`)
           .join('')}
       </div>
-      <p class="options-hint">Cliquez sur la toile pour créer un texte, ou sur un texte existant pour le modifier.</p>`;
+      <p class="options-hint">${escapeHtml(toolHint('text'))}</p>`;
   }
 
   private eyedropperOptionsHtml(): string {
     return `
       <div class="swatch-preview">
         <span class="big-swatch" style="background:${this.primaryColor}"></span>
-        <div><strong>${this.primaryColor.toUpperCase()}</strong><span>Couleur principale</span></div>
+        <div><strong>${this.primaryColor.toUpperCase()}</strong><span>${escapeHtml(t('topbar.primary'))}</span></div>
       </div>
-      <p class="options-hint">Cliquez dans l’image pour prélever une couleur. Maintenez Alt pour la couleur secondaire.</p>`;
+      <p class="options-hint">${escapeHtml(toolHint('eyedropper'))}</p>`;
   }
 
   private gradientOptionsHtml(): string {
     const options = this.gradientOptions;
     return `
       <div class="segmented" data-gradient-type>
-        <button data-gradient="linear" class="${options.type === 'linear' ? 'is-active' : ''}">Linéaire</button>
-        <button data-gradient="radial" class="${options.type === 'radial' ? 'is-active' : ''}">Radial</button>
+        <button data-gradient="linear" class="${options.type === 'linear' ? 'is-active' : ''}">${escapeHtml(t('opt.linear'))}</button>
+        <button data-gradient="radial" class="${options.type === 'radial' ? 'is-active' : ''}">${escapeHtml(t('opt.radial'))}</button>
       </div>
-      <label class="field-label">Couleurs
+      <label class="field-label">${escapeHtml(t('opt.colors'))}
         <select data-gradient-field="colors">
-          <option value="fg-transparent" ${options.colors === 'fg-transparent' ? 'selected' : ''}>Couleur → transparent</option>
-          <option value="fg-bg" ${options.colors === 'fg-bg' ? 'selected' : ''}>Couleur → secondaire</option>
-          <option value="bg-transparent" ${options.colors === 'bg-transparent' ? 'selected' : ''}>Secondaire → transparent</option>
+          <option value="fg-transparent" ${options.colors === 'fg-transparent' ? 'selected' : ''}>${escapeHtml(t('opt.fgTransparent'))}</option>
+          <option value="fg-bg" ${options.colors === 'fg-bg' ? 'selected' : ''}>${escapeHtml(t('opt.fgBg'))}</option>
+          <option value="bg-transparent" ${options.colors === 'bg-transparent' ? 'selected' : ''}>${escapeHtml(t('opt.bgTransparent'))}</option>
         </select>
       </label>
       <div class="gradient-preview" style="--fg:${this.primaryColor};--bg:${this.secondaryColor}"></div>
-      <label class="range-field">Opacité <output data-gradient-output>${options.opacity} %</output>
+      <label class="range-field">${escapeHtml(t('opt.opacity'))} <output data-gradient-output>${options.opacity} %</output>
         <input type="range" min="0" max="100" step="1" data-gradient-field="opacity" value="${options.opacity}">
       </label>
-      <label class="check-field"><input type="checkbox" data-gradient-field="newLayer" ${options.newLayer ? 'checked' : ''}> Dessiner sur un nouveau calque</label>
-      <p class="options-hint">Glissez pour définir le point de départ et la direction du dégradé.</p>`;
+      <label class="check-field"><input type="checkbox" data-gradient-field="newLayer" ${options.newLayer ? 'checked' : ''}> ${escapeHtml(t('opt.newLayer'))}</label>
+      <p class="options-hint">${escapeHtml(toolHint('gradient'))}</p>`;
   }
 
   private zoomOptionsHtml(): string {
     return `
       <div class="button-grid">
-        <button class="btn ghost sm" data-action="zoom-fit">Ajuster</button>
+        <button class="btn ghost sm" data-action="zoom-fit">${escapeHtml(t('stage.zoomFitShort'))}</button>
         <button class="btn ghost sm" data-action="zoom-100">100 %</button>
         <button class="btn ghost sm" data-action="zoom-200">200 %</button>
         <button class="btn ghost sm" data-action="zoom-400">400 %</button>
       </div>
-      <label class="range-field">Zoom <output>${Math.round(this.zoom * 100)} %</output>
+      <label class="range-field">${escapeHtml(t('opt.zoomLevel'))} <output>${Math.round(this.zoom * 100)} %</output>
         <input type="range" min="2" max="1600" step="1" data-zoom-slider value="${Math.round(this.zoom * 100)}">
       </label>
-      <p class="options-hint">Cliquez pour agrandir, Alt+clic pour réduire.</p>`;
+      <p class="options-hint">${escapeHtml(t('opt.zoomHint'))}</p>`;
   }
 
   private adjustmentOptionsHtml(): string {
@@ -1945,7 +2074,7 @@ export class SuperPhotoEditor {
             .join('')}
         </div>
         <div class="curve-shell">
-          <svg class="curve-editor" id="curve-editor" viewBox="0 0 256 256" preserveAspectRatio="none" aria-label="Éditeur de courbes">
+          <svg class="curve-editor" id="curve-editor" viewBox="0 0 256 256" preserveAspectRatio="none" aria-label="${escapeHtml(t('adjust.curves'))}">
             <rect x="0" y="0" width="256" height="256" class="curve-bg"></rect>
             ${[1, 2, 3].map((i) => `<line x1="${i * 64}" y1="0" x2="${i * 64}" y2="256" class="curve-grid"/>`).join('')}
             ${[1, 2, 3].map((i) => `<line x1="0" y1="${i * 64}" x2="256" y2="${i * 64}" class="curve-grid"/>`).join('')}
@@ -1954,14 +2083,14 @@ export class SuperPhotoEditor {
             <g id="curve-points"></g>
           </svg>
         </div>
-        <p class="options-hint">Cliquez pour ajouter un point, glissez pour le déplacer, double-cliquez pour le supprimer.</p>`;
+        <p class="options-hint">${escapeHtml(t('opt.curveHint'))}</p>`;
     } else {
       controls = params
         .map((param) => {
           const value = adjustment.params[param.key] ?? param.default;
           return `
             <label class="range-field">
-              <span>${param.label}</span>
+              <span>${escapeHtml(t(`adjust.${param.key}`))}</span>
               <output data-adjust-output="${param.key}">${this.formatParam(value, param)}</output>
               <input type="range" min="${param.min}" max="${param.max}" step="${param.step}" data-adjust-param="${param.key}" value="${value}">
             </label>`;
@@ -1970,11 +2099,11 @@ export class SuperPhotoEditor {
     }
     return `
       <div class="adjust-head">
-        <span class="live-badge"><span class="live-dot"></span>Aperçu direct</span>
+        <span class="live-badge"><span class="live-dot"></span>${escapeHtml(t('adjust.liveShort'))}</span>
         <div class="button-row compact">
-          <button class="btn primary sm" data-action="apply-adjustment">Appliquer</button>
-          <button class="btn ghost sm" data-action="cancel-adjustment">Annuler</button>
-          <button class="btn ghost sm" data-action="reset-adjustment" title="Réinitialiser">↺</button>
+          <button class="btn primary sm" data-action="apply-adjustment">${escapeHtml(t('common.apply'))}</button>
+          <button class="btn ghost sm" data-action="cancel-adjustment">${escapeHtml(t('common.cancel'))}</button>
+          <button class="btn ghost sm" data-action="reset-adjustment" title="${escapeHtml(t('common.reset'))}">↺</button>
         </div>
       </div>
       ${controls}`;
@@ -2106,7 +2235,7 @@ export class SuperPhotoEditor {
         this.lastSessionAt = 0;
         this.autosaveState = 'idle';
         this.syncAutosaveBadge();
-        this.toast('Session enregistrée effacée', 'success');
+        this.toast(t('msg.sessionCleared'), 'success');
       });
     });
 
@@ -2159,8 +2288,8 @@ export class SuperPhotoEditor {
     savePreferences(this.preferences);
     this.preferencesSnapshot = null;
     this.preferencesModal.classList.remove('is-open');
-    this.setMessage('Préférences enregistrées');
-    this.toast('Préférences enregistrées', 'success');
+    this.setMessage(t('prefs.saved'));
+    this.toast(t('prefs.saved'), 'success');
   }
 
   private resetPreferences(): void {
@@ -2168,7 +2297,7 @@ export class SuperPhotoEditor {
     applyPreferences(this.preferences);
     this.applyRuntimePreferences();
     this.syncPreferencesUI();
-    this.setMessage('Préférences réinitialisées');
+    this.setMessage(t('prefs.resetDone'));
   }
 
   private updatePreference<K extends keyof Preferences>(key: K, value: Preferences[K]): void {
@@ -2186,7 +2315,7 @@ export class SuperPhotoEditor {
     applyPreferences(this.preferences);
     this.applyRuntimePreferences('theme');
     this.syncPreferencesUI();
-    this.setMessage(next === 'dark' ? 'Thème sombre' : 'Thème clair');
+    this.setMessage(next === 'dark' ? t('prefs.dark') : t('prefs.light'));
   }
 
   private applyRuntimePreferences(changed?: keyof Preferences): void {
@@ -2209,8 +2338,8 @@ export class SuperPhotoEditor {
     const toggle = document.getElementById('btn-theme-toggle');
     if (toggle) {
       const label = resolveTheme(preferences.theme) === 'dark'
-        ? 'Passer au thème clair'
-        : 'Passer au thème sombre';
+        ? t('topbar.themeLight')
+        : t('topbar.themeDark');
       toggle.title = label;
       toggle.setAttribute('aria-label', label);
     }
@@ -2228,6 +2357,11 @@ export class SuperPhotoEditor {
       const key = input.dataset.prefToggle as keyof Preferences | undefined;
       if (!key) continue;
       input.checked = Boolean(preferences[key]);
+    }
+    for (const button of this.preferencesModal.querySelectorAll<HTMLElement>('[data-lang]')) {
+      const active = button.dataset.lang === currentLanguage();
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
     }
   }
 
@@ -2579,7 +2713,7 @@ export class SuperPhotoEditor {
     const after = deepClone(layer.path);
     renderLayer(layer);
     this.history.push({
-      label: 'Style du tracé',
+      label: t('msg.pathStyle'),
       undo: () => {
         layer.path = deepClone(before);
         renderLayer(layer);
@@ -2643,7 +2777,7 @@ export class SuperPhotoEditor {
         this.patchSourceRect = null;
         this.renderOverlay();
         this.renderToolOptions();
-        this.setMessage('Zone annulée');
+        this.setMessage(t('msg.patchCleared'));
         break;
       case 'close-path':
         this.closeActivePath();
@@ -2722,7 +2856,7 @@ export class SuperPhotoEditor {
         const before = layer.visible;
         layer.visible = !layer.visible;
         this.history.push({
-          label: before ? 'Masquer le calque' : 'Afficher le calque',
+          label: before ? t('layers.hide') : t('layers.show'),
           undo: () => {
             layer.visible = before;
             this.renderAll();
@@ -2743,7 +2877,7 @@ export class SuperPhotoEditor {
           layer.maskEnabled = true;
           this.layersDirty = true;
           this.renderAll();
-          this.setMessage('Masque réactivé');
+          this.setMessage(t('msg.maskOn'));
           return;
         }
         layer.maskEditing = !layer.maskEditing;
@@ -2794,7 +2928,7 @@ export class SuperPhotoEditor {
       this.layerPropBefore = null;
       if (Math.abs(before - after) < 0.001) return;
       this.history.push({
-        label: 'Opacité du calque',
+        label: t('msg.layerOpacity'),
         undo: () => {
           layer.opacity = before;
           this.renderAll();
@@ -2809,9 +2943,17 @@ export class SuperPhotoEditor {
     });
 
     const blend = byId<HTMLSelectElement>('layer-blend');
-    blend.innerHTML = BLEND_OPTIONS.map(
-      (option) => `<option value="${option.value}">${option.label}</option>`,
-    ).join('');    blend.addEventListener('change', () => {
+    const fillBlendOptions = (): void => {
+      const current = blend.value;
+      blend.innerHTML = BLEND_MODES
+        .map((mode) => `<option value="${mode}">${escapeHtml(blendLabel(mode))}</option>`)
+        .join('');
+      if (current) blend.value = current;
+    };
+    fillBlendOptions();
+    this.refreshBlendOptions = fillBlendOptions;
+    blend.dataset.i18nOptions = 'blend';
+    blend.addEventListener('change', () => {
       const layer = this.activeLayer;
       if (!layer) return;
       const before = layer.blend;
@@ -2841,7 +2983,7 @@ export class SuperPhotoEditor {
     nameInput.addEventListener('change', () => {
       const layer = this.activeLayer;
       if (!layer) return;
-      const after = nameInput.value.trim() || 'Calque';
+      const after = nameInput.value.trim() || t('layers.placeholder');
       const before = nameBefore || layer.name;
       if (after === before) return;
       layer.name = after;
@@ -2868,7 +3010,7 @@ export class SuperPhotoEditor {
       const after = maskEnabled.checked;
       layer.maskEnabled = after;
       this.history.push({
-        label: after ? 'Activer le masque' : 'Désactiver le masque',
+        label: after ? t('msg.maskEnable') : t('msg.maskDisable'),
         undo: () => {
           layer.maskEnabled = before;
           this.renderAll();
@@ -2930,7 +3072,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Masque ajouté — peignez en sombre pour masquer');
+    this.setMessage(t('msg.maskAdded'));
   }
 
   private applyActiveMask(): void {
@@ -2942,7 +3084,7 @@ export class SuperPhotoEditor {
     flattenMask(layer);
     const after = cloneCanvas(layer.canvas);
     this.history.push({
-      label: 'Appliquer le masque',
+      label: t('layers.applyMaskLabel'),
       undo: () => {
         layer.canvas = before;
         layer.mask = mask;
@@ -2960,7 +3102,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Masque appliqué aux pixels');
+    this.setMessage(t('msg.maskApplied'));
   }
 
   private deleteActiveMask(): void {
@@ -2990,7 +3132,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Masque supprimé');
+    this.setMessage(t('msg.maskDeleted'));
   }
 
   private selectLayer(layerId: string): void {
@@ -3011,7 +3153,7 @@ export class SuperPhotoEditor {
     const index = doc.layers.findIndex((layer) => layer.id === doc.activeLayerId);
     const insertAt = index >= 0 ? index + 1 : doc.layers.length;
     const previousActive = doc.activeLayerId;
-    const layer = createLayer(`Calque ${doc.layers.length + 1}`, doc.width, doc.height);
+    const layer = createLayer(`${t('layers.placeholder')} ${doc.layers.length + 1}`, doc.width, doc.height);
     doc.layers.splice(insertAt, 0, layer);
     doc.activeLayerId = layer.id;
     this.history.push({
@@ -3030,7 +3172,7 @@ export class SuperPhotoEditor {
     });
     this.layersDirty = true;
     this.renderAll();
-    this.setMessage('Calque ajouté');
+    this.setMessage(t('msg.layerAdded'));
   }
 
   private duplicateActiveLayer(): void {
@@ -3044,7 +3186,7 @@ export class SuperPhotoEditor {
     doc.layers.splice(insertAt, 0, copy);
     doc.activeLayerId = copy.id;
     this.history.push({
-      label: 'Dupliquer le calque',
+      label: t('layers.duplicate'),
       undo: () => {
         const current = doc.layers.findIndex((item) => item.id === copy.id);
         if (current >= 0) doc.layers.splice(current, 1);
@@ -3059,7 +3201,7 @@ export class SuperPhotoEditor {
     });
     this.layersDirty = true;
     this.renderAll();
-    this.setMessage('Calque dupliqué');
+    this.setMessage(t('msg.layerDuplicated'));
   }
 
   private deleteActiveLayer(): void {
@@ -3068,7 +3210,7 @@ export class SuperPhotoEditor {
     if (!doc || !layer) return;
     if (this.adjustment) this.cancelAdjustment();
     if (doc.layers.length <= 1) {
-      this.toast('Impossible de supprimer le dernier calque.', 'error');
+      this.toast(t('msg.lastLayer'), 'error');
       return;
     }
     const index = doc.layers.findIndex((item) => item.id === layer.id);
@@ -3092,7 +3234,7 @@ export class SuperPhotoEditor {
     });
     this.layersDirty = true;
     this.renderAll();
-    this.setMessage('Calque supprimé');
+    this.setMessage(t('msg.layerDeleted'));
   }
 
   private moveActiveLayer(delta: number): void {
@@ -3106,7 +3248,7 @@ export class SuperPhotoEditor {
     doc.layers.splice(index, 1);
     doc.layers.splice(nextIndex, 0, layer);
     this.history.push({
-      label: 'Réorganiser les calques',
+      label: t('msg.layerReorder'),
       undo: () => {
         doc.layers.splice(nextIndex, 1);
         doc.layers.splice(index, 0, layer);
@@ -3128,12 +3270,12 @@ export class SuperPhotoEditor {
 
   private openAdjustment(id: AdjustmentId): void {
     if (!this.doc) {
-      this.toast('Ouvrez un document avant d’utiliser un réglage.', 'error');
+      this.toast(t('msg.openBeforeAdjust'), 'error');
       return;
     }
     const layer = this.activeLayer;
     if (!layer) {
-      this.toast('Sélectionnez un calque.', 'error');
+      this.toast(t('msg.selectLayer'), 'error');
       return;
     }
     if (this.adjustment) this.cancelAdjustment();
@@ -3179,7 +3321,7 @@ export class SuperPhotoEditor {
     window.setTimeout(() => {
       this.toolOptions.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }, 30);
-    this.setMessage(`${ADJUSTMENT_TITLES[id]} — aperçu direct`);
+    this.setMessage(t('adjust.live', { name: t(`adjust.${id}`) }));
   }
 
   private scheduleAdjustmentPreview(): void {
@@ -3294,8 +3436,8 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage(`Réglage appliqué : ${label}`);
-    this.toast(`Réglage appliqué : ${label}`, 'success');
+    this.setMessage(t('adjust.applied', { name: label }));
+    this.toast(t('adjust.applied', { name: label }), 'success');
   }
 
   private cancelAdjustment(): void {
@@ -3461,7 +3603,7 @@ export class SuperPhotoEditor {
           ? 'repeating-conic-gradient(#d6d6da 0% 25%, #f4f4f6 0% 50%) 0 0 / 12px 12px'
           : '#f2f2f4';
       byId('new-preview-label').textContent =
-        `${Math.round(w)} × ${Math.round(h)} px · ${Math.max(1, Math.round(Number(dpi.value) || 72))} ppp`;
+        `${Math.round(w)} × ${Math.round(h)} px · ${Math.max(1, Math.round(Number(dpi.value) || 72))} ${t('common.dpi')}`;
     };
 
     const setPreset = (button: HTMLElement) => {
@@ -3656,15 +3798,15 @@ export class SuperPhotoEditor {
     this.resizeRatio = this.doc.width / this.doc.height;
     this.resizeRatioLock = mode === 'image';
     this.resizeAnchor = { x: 0.5, y: 0.5 };
-    byId('resize-title').textContent = mode === 'image' ? 'Taille de l’image' : 'Taille de la zone de travail';
+    byId('resize-title').textContent = mode === 'image' ? t('resize.imageTitle') : t('resize.canvasTitle');
     byId('resize-subtitle').textContent = mode === 'image'
-      ? 'Rééchantillonne les pixels de tous les calques.'
-      : 'Étend ou rogne la zone de travail sans changer l’échelle des pixels.';
+      ? t('resize.imageSubtitle')
+      : t('resize.canvasSubtitle');
     byId('resize-dpi-row').hidden = mode !== 'image';
     byId('resize-anchor-row').hidden = mode !== 'canvas';
     byId('resize-note').textContent = mode === 'image'
-      ? 'Rééchantillonnage haute qualité via le navigateur.'
-      : 'Les calques existants conservent leur taille ; choisissez le point d’ancrage.';
+      ? t('resize.quality')
+      : t('resize.anchorHint');
     const lock = byId<HTMLButtonElement>('resize-ratio-lock');
     lock.hidden = mode !== 'image';
     lock.classList.toggle('is-active', this.resizeRatioLock);
@@ -3713,7 +3855,7 @@ export class SuperPhotoEditor {
     } else {
       after = resizeDocumentCanvas(doc, width, height, this.resizeAnchor.x, this.resizeAnchor.y);
     }
-    const label = this.resizeMode === 'image' ? 'Taille de l’image' : 'Taille de la zone de travail';
+    const label = this.resizeMode === 'image' ? t('resize.imageTitle') : t('resize.canvasTitle');
     this.history.push({
       label,
       undo: () => {
@@ -3745,7 +3887,7 @@ export class SuperPhotoEditor {
   private bindExportDialog(): void {
     for (const button of this.exportModal.querySelectorAll<HTMLElement>('[data-format]')) {
       button.addEventListener('click', () => {
-        this.exportFormat = (button.dataset.format as 'png' | 'jpeg' | 'webp') ?? 'png';
+        this.exportFormat = (button.dataset.format as ExportFormat) ?? 'png';
         this.updateExportFormatUI();
       });
     }
@@ -3763,7 +3905,7 @@ export class SuperPhotoEditor {
 
   private openExportDialog(): void {
     if (!this.doc) {
-      this.toast('Ouvrez un document avant d’exporter.', 'error');
+      this.toast(t('export.noDocument'), 'error');
       return;
     }
     if (this.adjustment) {
@@ -3774,7 +3916,8 @@ export class SuperPhotoEditor {
     this.closeCanvasMenu();
     const filename = byId<HTMLInputElement>('export-filename');
     filename.value = `${sanitizeFilename(this.doc.name)}.png`;
-    byId('export-dimensions').textContent = `${this.doc.width} × ${this.doc.height} px · ${Math.round(this.doc.dpi)} ppp`;
+    byId('export-dimensions').textContent =
+      `${this.doc.width} × ${this.doc.height} px · ${Math.round(this.doc.dpi)} ${t('common.dpi')}`;
     this.updateExportFormatUI();
     this.exportModal.classList.add('is-open');
     window.setTimeout(() => {
@@ -3791,13 +3934,20 @@ export class SuperPhotoEditor {
     for (const button of this.exportModal.querySelectorAll<HTMLElement>('[data-format]')) {
       button.classList.toggle('is-active', button.dataset.format === this.exportFormat);
     }
-    byId('export-quality-row').hidden = this.exportFormat === 'png';
+    byId('export-quality-row').hidden = this.exportFormat === 'png' || this.exportFormat === 'sps';
     const filename = byId<HTMLInputElement>('export-filename');
     const base = stripExtension(filename.value.trim() || 'superphoto');
-    filename.value = `${base}.${this.exportFormat === 'jpeg' ? 'jpg' : this.exportFormat}`;
-    byId('export-hint').textContent = this.exportFormat === 'png'
-      ? 'PNG conserve la transparence et la netteté des pixels.'
-      : 'Le fond transparent sera aplati sur du blanc.';
+    const extension = this.exportFormat === 'jpeg' ? 'jpg' : this.exportFormat;
+    filename.value = `${base}.${extension}`;
+    const hint = byId('export-hint');
+    const key =
+      this.exportFormat === 'sps'
+        ? 'export.hintSps'
+        : this.exportFormat === 'png'
+          ? 'export.hintPng'
+          : 'export.hintFlat';
+    hint.textContent = t(key);
+    hint.dataset.i18n = key;
   }
 
   private async doExport(): Promise<void> {
@@ -3805,14 +3955,20 @@ export class SuperPhotoEditor {
     if (!doc || this.saving) return;
     this.saving = true;
     const button = byId<HTMLButtonElement>('export-run');
-    const original = button.textContent;
+    const label = button.querySelector('span');
+    const original = label?.textContent ?? button.textContent ?? '';
     button.disabled = true;
-    button.textContent = 'Export…';
+    if (label) label.textContent = t('export.busy');
     try {
       const mime = mimeForFormat(this.exportFormat);
-      const canvas = compositeCanvas(doc, this.exportFormat === 'png' ? null : '#ffffff');
       const quality = Number(byId<HTMLInputElement>('export-quality').value) / 100;
-      const blob = await canvasToBlob(canvas, mime, quality);
+      const blob = this.exportFormat === 'sps'
+        ? await serializeProject(doc)
+        : await canvasToBlob(
+            compositeCanvas(doc, this.exportFormat === 'png' ? null : '#ffffff'),
+            mime,
+            quality,
+          );
       let filename = byId<HTMLInputElement>('export-filename').value.trim() || 'superphoto';
       const expectedExt = extensionForMime(mime);
       if (!filename.toLowerCase().endsWith(`.${expectedExt}`)) {
@@ -3821,15 +3977,20 @@ export class SuperPhotoEditor {
       const saved = await saveExport(blob, filename, mime);
       if (saved) {
         this.closeExportDialog();
-        this.toast(`Image exportée · ${filename}`, 'success');
+        this.toast(
+          this.exportFormat === 'sps'
+            ? t('export.projectDone', { name: filename })
+            : t('export.done', { name: filename }),
+          'success',
+        );
       }
     } catch (error) {
       console.error(error);
-      this.toast(`Export impossible : ${error instanceof Error ? error.message : String(error)}`, 'error');
+      this.toast(t('export.failed', { error: this.errorText(error) }), 'error');
     } finally {
       this.saving = false;
       button.disabled = false;
-      button.textContent = original ?? 'Exporter';
+      if (label) label.textContent = original;
     }
   }
 
@@ -3847,7 +4008,7 @@ export class SuperPhotoEditor {
     const apply = (): void => {
       const active = Boolean(document.fullscreenElement);
       button.setAttribute('aria-pressed', String(active));
-      button.title = active ? 'Quitter le plein écran (F11)' : 'Plein écran (F11)';
+      button.title = active ? t('stage.fullscreenExit') : t('stage.fullscreen');
       button.setAttribute('aria-label', button.title);
     };
     const toggle = (): void => {
@@ -3855,7 +4016,7 @@ export class SuperPhotoEditor {
         void document.exitFullscreen().catch(() => {});
       } else {
         void document.documentElement.requestFullscreen().catch(() => {
-          this.toast('Le plein écran est refusé par le système.', 'error');
+          this.toast(t('msg.fullscreenDenied'), 'error');
         });
       }
     };
@@ -3960,20 +4121,20 @@ export class SuperPhotoEditor {
     const menu = document.createElement('div');
     menu.className = 'canvas-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', 'Actions de sélection');
+    menu.setAttribute('aria-label', t('menu.label'));
 
     const head = document.createElement('div');
     head.className = 'canvas-menu-head';
     head.textContent = selection && bounds
-      ? `Sélection · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px${feather ? ` · contour ${feather} px` : ''}`
-      : 'Aucune sélection';
+      ? t(feather ? 'status.feather' : 'status.selection', { w: Math.round(bounds.w), h: Math.round(bounds.h), f: feather })
+      : t('menu.noSelection');
     menu.appendChild(head);
 
     const items: Array<
       { label: string; hint?: string; disabled?: boolean; run: () => void } | null
     > = [
       {
-        label: 'Remplir la sélection',
+        label: t('menu.fill'),
         hint: 'Alt+Retour',
         disabled: !selection,
         run: () => this.fillSelection(this.primaryColor),
@@ -3986,7 +4147,7 @@ export class SuperPhotoEditor {
       },
       null,
       {
-        label: 'Inverser la sélection',
+        label: t('menu.invert'),
         disabled: !selection,
         run: () => {
           if (!this.selection) return;
@@ -3996,8 +4157,8 @@ export class SuperPhotoEditor {
         },
       },
       {
-        label: 'Désélectionner',
-        hint: 'Échap',
+        label: t('menu.deselect'),
+        hint: 'Esc',
         disabled: !selection,
         run: () => {
           this.selection = null;
@@ -4007,7 +4168,7 @@ export class SuperPhotoEditor {
         },
       },
       {
-        label: 'Tout sélectionner',
+        label: t('menu.selectAll'),
         hint: 'Ctrl+A',
         run: () => this.handleAction('select-all'),
       },
@@ -4057,7 +4218,7 @@ export class SuperPhotoEditor {
   private onPointerDown(event: PointerEvent): void {
     if (!this.doc) return;
     if (this.adjustment) {
-      this.toast('Validez ou annulez le réglage en cours.', 'info');
+      this.toast(t('msg.finishAdjustment'), 'info');
       return;
     }
     if (event.button === 2) return;
@@ -4369,7 +4530,7 @@ export class SuperPhotoEditor {
       const before = deepClone(drag.beforeText);
       const after = deepClone(layer.text);
       this.history.push({
-        label: 'Déplacer le texte',
+        label: t('msg.moveText'),
         undo: () => {
           layer.text = deepClone(before);
           layer.kind = 'text';
@@ -4387,7 +4548,7 @@ export class SuperPhotoEditor {
       const before = deepClone(drag.beforePath);
       const after = deepClone(layer.path);
       this.history.push({
-        label: 'Déplacer le tracé',
+        label: t('msg.movePath'),
         undo: () => {
           layer.path = deepClone(before);
           layer.kind = 'path';
@@ -4405,7 +4566,7 @@ export class SuperPhotoEditor {
       const before = drag.beforeCanvas;
       const after = cloneCanvas(layer.canvas);
       this.history.push({
-        label: 'Déplacer le calque',
+        label: t('msg.moveLayer'),
         undo: () => {
           const ctx = canvasContext(layer.canvas);
           ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
@@ -4474,7 +4635,7 @@ export class SuperPhotoEditor {
       const radius = Math.max(2, this.brush.size / 2);
       if (tool === 'stamp') {
         if (!this.stampSource) {
-          this.toast('Alt+clic sur l’image pour définir la source du tampon.', 'info');
+          this.toast(t('msg.stampFirst'), 'info');
           return;
         }
         offset = { x: this.stampSource.x - point.x, y: this.stampSource.y - point.y };
@@ -4677,7 +4838,7 @@ export class SuperPhotoEditor {
     );
     if (!found) {
       this.selection = null;
-      this.setMessage('Aucun pixel à sélectionner à cet endroit.');
+      this.setMessage(t('msg.noPixels'));
       this.renderOverlay();
       this.renderToolOptions();
       return;
@@ -4735,11 +4896,11 @@ export class SuperPhotoEditor {
     const dx = drag.current.x - drag.start.x;
     const dy = drag.current.y - drag.start.y;
     if (Math.hypot(dx, dy) < 2) {
-      this.setMessage('Glissez la zone sur une zone propre pour la réparer.');
+      this.setMessage(t('opt.patchReadyText'));
       return;
     }
     if (layer.mask && layer.maskEditing) {
-      this.toast('Revenez aux pixels du calque pour utiliser la pièce.', 'info');
+      this.toast(t('msg.patchExitMask'), 'info');
       return;
     }
     if (layer.kind !== 'raster') {
@@ -4763,7 +4924,7 @@ export class SuperPhotoEditor {
     patchRegion(layer.canvas, composite, rect, dst, shift);
     const after = cloneCanvas(layer.canvas);
     this.history.push({
-      label: this.patchOptions.corrector ? 'Pièce (correcteur)' : 'Pièce',
+      label: this.patchOptions.corrector ? `${t('tool.patch.label')} (${t('opt.corrector').toLowerCase()})` : t('tool.patch.label'),
       undo: () => {
         const ctx = canvasContext(layer.canvas);
         ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
@@ -4781,7 +4942,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Zone réparée');
+    this.setMessage(t('msg.patchFixed'));
   }
 
   private finishMarquee(drag: Extract<DragState, { kind: 'marquee' }>): void {
@@ -4860,7 +5021,7 @@ export class SuperPhotoEditor {
     this.fitToView();
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage(`Recadré · ${width} × ${height} px`);
+    this.setMessage(t('msg.cropped', { w: width, h: height }));
   }
 
   private finishShape(drag: Extract<DragState, { kind: 'shape' }>): void {
@@ -4875,7 +5036,7 @@ export class SuperPhotoEditor {
       rectangle: 'Rectangle',
       ellipse: 'Ellipse',
       triangle: 'Triangle',
-      star: 'Étoile',
+      star: t('opt.star'),
       line: 'Ligne',
     }[options.type];
     const active = this.activeLayer;
@@ -4943,7 +5104,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage(`${label} dessiné`);
+    this.setMessage(t('msg.shapeDrawn', { label }));
   }
 
   private finishGradient(drag: Extract<DragState, { kind: 'gradient' }>): void {
@@ -4961,7 +5122,7 @@ export class SuperPhotoEditor {
     let previousActive = doc.activeLayerId;
     let beforeCanvas: HTMLCanvasElement | null = null;
     if (useNewLayer) {
-      target = createLayer('Dégradé', doc.width, doc.height, 'shape');
+      target = createLayer(t('tool.gradient.label'), doc.width, doc.height, 'shape');
       const index = doc.layers.findIndex((layer) => layer.id === doc.activeLayerId);
       const insertAt = index >= 0 ? index + 1 : doc.layers.length;
       doc.layers.splice(insertAt, 0, target);
@@ -4981,7 +5142,7 @@ export class SuperPhotoEditor {
     if (useNewLayer) {
       const insertAt = doc.layers.findIndex((layer) => layer.id === target.id);
       this.history.push({
-        label: 'Ajouter un dégradé',
+        label: t('msg.addGradient'),
         undo: () => {
           const index = doc.layers.findIndex((layer) => layer.id === target.id);
           if (index >= 0) doc.layers.splice(index, 1);
@@ -4998,7 +5159,7 @@ export class SuperPhotoEditor {
       const before = beforeCanvas;
       const after = cloneCanvas(target.canvas);
       this.history.push({
-        label: 'Dessiner un dégradé',
+        label: t('msg.drawGradient'),
         undo: () => {
           const context = canvasContext(target.canvas);
           context.clearRect(0, 0, target.canvas.width, target.canvas.height);
@@ -5016,7 +5177,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Dégradé appliqué');
+    this.setMessage(t('msg.gradientApplied'));
   }
 
   private finishSpotlight(drag: Extract<DragState, { kind: 'spotlight' }>): void {
@@ -5024,7 +5185,7 @@ export class SuperPhotoEditor {
     const layer = this.activeLayer;
     if (!doc || !layer) return;
     if (layer.mask && layer.maskEditing) {
-      this.toast('Quittez l’édition du masque pour poser un point lumineux.', 'info');
+      this.toast(t('msg.maskExit'), 'info');
       return;
     }
     const distance = Math.hypot(drag.current.x - drag.start.x, drag.current.y - drag.start.y);
@@ -5267,13 +5428,14 @@ export class SuperPhotoEditor {
   /** Masque flou de la sélection courante, à la résolution du document. */
   private getSelectionMask(): SelectionMask | null {
     const doc = this.doc;
+    const tab = this.tab;
     const selection = this.selection;
-    if (!doc || !selection) return null;
+    if (!doc || !tab || !selection) return null;
     if (selectionFeather(selection) <= 0) return null;
     const key = `${doc.width}x${doc.height}:${selectionFeather(selection)}:${JSON.stringify(selection)}`;
-    if (this.selectionMaskCache?.key === key) return this.selectionMaskCache.mask;
+    if (tab.maskCache?.key === key) return tab.maskCache.mask;
     const mask = buildSelectionMask(selection, doc.width, doc.height);
-    this.selectionMaskCache = mask ? { key, mask } : null;
+    tab.maskCache = mask ? { key, mask } : null;
     return mask;
   }
 
@@ -5286,12 +5448,13 @@ export class SuperPhotoEditor {
     width: number,
     height: number,
   ): Uint8ClampedArray | null {
-    if (!selection || selectionFeather(selection) <= 0) return null;
+    const tab = this.tab;
+    if (!tab || !selection || selectionFeather(selection) <= 0) return null;
     const key = `${width}x${height}:${selectionFeather(selection)}:${JSON.stringify(selection)}`;
-    if (this.adjustmentMaskCache?.key === key) return this.adjustmentMaskCache.data;
+    if (tab.coverageCache?.key === key) return tab.coverageCache.data;
     const mask = buildSelectionMask(selection, width, height);
     if (!mask) return null;
-    this.adjustmentMaskCache = { key, data: mask.data };
+    tab.coverageCache = { key, data: mask.data };
     return mask.data;
   }
 
@@ -5360,7 +5523,7 @@ export class SuperPhotoEditor {
   private createPathLayer(): Layer | null {
     const doc = this.doc;
     if (!doc) return null;
-    const layer = createLayer(`Tracé ${doc.layers.length + 1}`, doc.width, doc.height, 'path');
+    const layer = createLayer(`${t('kind.path')} ${doc.layers.length + 1}`, doc.width, doc.height, 'path');
     layer.path = {
       anchors: [],
       closed: false,
@@ -5374,7 +5537,7 @@ export class SuperPhotoEditor {
     doc.layers.splice(insertAt, 0, layer);
     doc.activeLayerId = layer.id;
     this.history.push({
-      label: 'Nouveau tracé',
+      label: t('msg.newPath'),
       undo: () => {
         const current = doc.layers.findIndex((item) => item.id === layer.id);
         if (current >= 0) doc.layers.splice(current, 1);
@@ -5390,7 +5553,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Nouveau tracé Bézier');
+    this.setMessage(t('msg.newPathBezier'));
     return layer;
   }
 
@@ -5516,7 +5679,7 @@ export class SuperPhotoEditor {
     if (JSON.stringify(after) === JSON.stringify(drag.before)) return;
     const before = deepClone(drag.before);
     this.history.push({
-      label: 'Modifier le tracé',
+      label: t('msg.editPath'),
       undo: () => {
         layer.path = deepClone(before);
         layer.kind = 'path';
@@ -5543,7 +5706,7 @@ export class SuperPhotoEditor {
     const after = deepClone(layer.path);
     renderLayer(layer);
     this.history.push({
-      label: 'Fermer le tracé',
+      label: t('msg.closePathLabel'),
       undo: () => {
         layer.path = deepClone(before);
         layer.kind = 'path';
@@ -5560,7 +5723,7 @@ export class SuperPhotoEditor {
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
-    this.setMessage('Tracé fermé');
+    this.setMessage(t('msg.pathClosed'));
   }
 
   private deleteLastAnchor(): void {
@@ -5763,6 +5926,19 @@ export class SuperPhotoEditor {
           if (this.doc) this.handleAction('select-all');
           return;
         }
+        if (key === 'w') {
+          event.preventDefault();
+          if (this.activeTabId) this.closeTab(this.activeTabId);
+          return;
+        }
+        if (event.key === 'Tab' && this.tabs.length > 1) {
+          event.preventDefault();
+          const index = this.tabs.findIndex((item) => item.id === this.activeTabId);
+          const step = event.shiftKey ? -1 : 1;
+          const next = this.tabs[(index + step + this.tabs.length) % this.tabs.length];
+          if (next) this.activateTab(next.id);
+          return;
+        }
         if (key === '1') {
           event.preventDefault();
           this.setZoom(1);
@@ -5879,7 +6055,7 @@ export class SuperPhotoEditor {
     this.composeFeathered(before, layer.canvas);
     const after = cloneCanvas(layer.canvas);
     this.history.push({
-      label: 'Effacer la sélection',
+      label: t('msg.clearSelection'),
       undo: () => {
         const context = canvasContext(layer.canvas);
         context.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
@@ -5917,7 +6093,7 @@ export class SuperPhotoEditor {
     const selection = this.selection;
     if (!doc || !layer) return;
     if (!selection) {
-      this.toast('Tracez une sélection avant de la remplir.', 'info');
+      this.toast(t('msg.selectionFirst'), 'info');
       return;
     }
     if (layer.kind === 'text' || layer.kind === 'path') {
@@ -5945,7 +6121,7 @@ export class SuperPhotoEditor {
       ctx.restore();
     }
     const after = cloneCanvas(canvas);
-    const label = isMask ? 'Remplir le masque' : 'Remplir la sélection';
+    const label = isMask ? t('msg.maskFilled', { color: '' }).replace(' · ', '') : t('menu.fill');
     this.history.push({
       label,
       undo: () => {
@@ -5968,14 +6144,40 @@ export class SuperPhotoEditor {
   }
 
   private bindDragAndDrop(): void {
-    window.addEventListener('dragover', (event) => event.preventDefault());
+    const overlay = document.getElementById('drop-overlay');
+    let depth = 0;
+
+    const show = (visible: boolean): void => {
+      if (overlay) overlay.hidden = !visible;
+    };
+
+    const hasFiles = (event: DragEvent): boolean =>
+      Array.from(event.dataTransfer?.types ?? []).includes('Files');
+
+    window.addEventListener('dragenter', (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      show(true);
+    });
+    window.addEventListener('dragover', (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      show(true);
+    });
+    window.addEventListener('dragleave', (event) => {
+      if (!hasFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) show(false);
+    });
     window.addEventListener('drop', (event) => {
       event.preventDefault();
-      const file = event.dataTransfer?.files?.[0];
-      if (!file) return;
-      void this.loadImageBlob(file, file.name).catch((error: unknown) => {
-        this.toast(`Image illisible : ${error instanceof Error ? error.message : String(error)}`, 'error');
-      });
+      depth = 0;
+      show(false);
+      const files = [...(event.dataTransfer?.files ?? [])];
+      if (files.length === 0) return;
+      void this.openDroppedFiles(files);
     });
 
     if (!isTauri()) return;
@@ -5983,19 +6185,137 @@ export class SuperPhotoEditor {
       .then(({ getCurrentWebviewWindow }) => {
         void getCurrentWebviewWindow().onDragDropEvent((event) => {
           const payload = event.payload;
-          if (payload.type !== 'drop' || payload.paths.length === 0) return;
-          const path = payload.paths[0];
-          if (!path) return;
-          void readNativeImage(path)
-            .then((opened) => this.loadImageBlob(opened.blob, opened.name))
-            .catch((error: unknown) => {
-              this.toast(`Image illisible : ${error instanceof Error ? error.message : String(error)}`, 'error');
-            });
+          if (payload.type === 'enter' || payload.type === 'over') {
+            show(true);
+            return;
+          }
+          if (payload.type === 'leave') {
+            show(false);
+            return;
+          }
+          if (payload.type !== 'drop') return;
+          show(false);
+          if (payload.paths.length === 0) return;
+          void this.openNativePaths(payload.paths);
         });
       })
       .catch(() => {
         /* La version web reste utilisable sans le pont Tauri. */
       });
+  }
+
+  /** Ouvre une liste de fichiers venus du bureau (web ou webview). */
+  private async openDroppedFiles(files: File[]): Promise<void> {
+    for (const file of files) {
+      if (!isSupportedMedia(file) && !looksLikeProject(file.name)) {
+        this.toast(t('drop.unsupported', { name: file.name }), 'error');
+        continue;
+      }
+      try {
+        await this.openFileBlob(file.name, file);
+      } catch (error) {
+        this.toast(t('msg.imageUnreadable', { error: this.errorText(error) }), 'error');
+        console.warn(error);
+      }
+    }
+  }
+
+  private async openNativePaths(paths: string[]): Promise<void> {
+    for (const path of paths) {
+      try {
+        const opened = await readNativeImage(path);
+        await this.openFileBlob(opened.name, opened.blob);
+      } catch (error) {
+        this.toast(t('msg.imageUnreadable', { error: this.errorText(error) }), 'error');
+        console.warn(error);
+      }
+    }
+  }
+
+  private errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  /**
+   * Un seul point d'entrée pour tous les médias : projet `.sps`, image de
+   * n'importe quel format décodable, ou vidéo (première image).
+   */
+  private async openFileBlob(name: string, blob: Blob): Promise<void> {
+    if (looksLikeProject(name) || blob.type === SPS_MIME) {
+      const doc = await parseProject(blob);
+      this.openTab(doc);
+      this.closeNewDocumentDialog();
+      this.toast(t('msg.projectOpened', { name: doc.name, n: doc.layers.length }), 'success');
+      return;
+    }
+    if (!isSupportedMedia({ name, type: blob.type })) {
+      throw new Error(t('drop.unsupported', { name }));
+    }
+    await this.loadImageBlob(blob, name);
+  }
+
+  private bindTabs(): void {
+    const strip = document.getElementById('doc-tabs');
+    strip?.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const close = target.closest<HTMLElement>('[data-tab-close]');
+      if (close) {
+        event.stopPropagation();
+        const id = close.dataset.tabClose;
+        if (id) this.closeTab(id);
+        return;
+      }
+      const tab = target.closest<HTMLElement>('[data-tab-id]');
+      if (!tab) return;
+      const id = tab.dataset.tabId;
+      if (id && id !== this.activeTabId) this.activateTab(id);
+    });
+    strip?.addEventListener('auxclick', (event) => {
+      if (event.button !== 1) return;
+      const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-tab-id]');
+      const id = tab?.dataset.tabId;
+      if (id) {
+        event.preventDefault();
+        this.closeTab(id);
+      }
+    });
+    document.getElementById('doc-tab-add')?.addEventListener('click', () => {
+      this.openNewDocumentDialog();
+    });
+  }
+
+  private bindLanguage(): void {
+    const applyLanguage = (lang: Lang): void => {
+      setLanguage(lang);
+      this.renderTabs();
+      this.renderLayers();
+      this.renderToolOptions();
+      this.syncChrome();
+      this.syncAutosaveBadge();
+      this.renderTabs();
+    };
+
+    for (const button of this.preferencesModal.querySelectorAll<HTMLElement>('[data-lang]')) {
+      button.addEventListener('click', () => {
+        const lang = button.dataset.lang as Lang | undefined;
+        if (!lang) return;
+        saveLanguage(lang);
+        applyLanguage(lang);
+        this.syncPreferencesUI();
+      });
+    }
+
+    window.addEventListener(LANGUAGE_EVENT, () => {
+      this.statusCache.clear();
+      this.refreshBlendOptions?.();
+      this.renderTabs();
+      this.renderToolOptions();
+      this.renderLayers();
+      this.syncChrome();
+      this.syncAutosaveBadge();
+      this.syncMaskControls();
+      this.renderOverlay();
+    });
   }
 
   private bindGlobalButtons(): void {
@@ -6007,42 +6327,45 @@ export class SuperPhotoEditor {
 
   private async openImageFlow(): Promise<void> {
     try {
-      const opened = await openImage();
-      if (!opened) return;
-      await this.loadImageBlob(opened.blob, opened.name);
+      const opened = await openImages();
+      if (opened.length === 0) return;
+      for (const item of opened) await this.openFileBlob(item.name, item.blob);
     } catch (error) {
       console.error(error);
-      this.toast(`Ouverture impossible : ${error instanceof Error ? error.message : String(error)}`, 'error');
+      this.toast(t('msg.openFailed', { error: this.errorText(error) }), 'error');
     }
   }
 
   private async loadImageBlob(blob: Blob, name: string): Promise<void> {
-    const bitmap = await createImageBitmap(blob);
-    let width = bitmap.width;
-    let height = bitmap.height;
-    const maxDimension = 16000;
-    const scale = Math.min(1, maxDimension / Math.max(width, height));
-    width = Math.max(1, Math.round(width * scale));
-    height = Math.max(1, Math.round(height * scale));
-    const layer = createLayer('Image', width, height, 'raster');
-    const ctx = canvasContext(layer.canvas);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = SMOOTHING_QUALITY[this.preferences.quality];
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-    this.invalidateDisplayRect();
-    const doc: PhotoDoc = {
-      name: stripExtension(name) || 'Image',
-      width,
-      height,
-      dpi: 72,
-      background: 'transparent',
-      layers: [layer],
-      activeLayerId: layer.id,
-    };
-    this.applyDocument(doc);
-    this.closeNewDocumentDialog();
-    this.toast(`${doc.name} · ${width} × ${height} px`, 'success');
+    const media = await decodeMedia(blob, name);
+    try {
+      let width = media.width;
+      let height = media.height;
+      const maxDimension = 16000;
+      const scale = Math.min(1, maxDimension / Math.max(width, height));
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+      const layer = createLayer('Image', width, height, 'raster');
+      const ctx = canvasContext(layer.canvas);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = SMOOTHING_QUALITY[this.preferences.quality];
+      media.draw(ctx, width, height);
+      this.invalidateDisplayRect();
+      const doc: PhotoDoc = {
+        name: stripExtension(name) || 'Image',
+        width,
+        height,
+        dpi: 72,
+        background: 'transparent',
+        layers: [layer],
+        activeLayerId: layer.id,
+      };
+      this.openTab(doc);
+      this.closeNewDocumentDialog();
+      this.toast(t('msg.opened', { name: doc.name, w: width, h: height }), 'success');
+    } finally {
+      media.release();
+    }
   }
 
   private undo(): void {
@@ -6056,7 +6379,7 @@ export class SuperPhotoEditor {
       this.layersDirty = true;
       this.renderAll();
       this.renderToolOptions();
-      this.setMessage(`Annulé : ${label}`);
+      this.setMessage(t('msg.undone', { label }));
     }
   }
 
@@ -6067,7 +6390,7 @@ export class SuperPhotoEditor {
       this.layersDirty = true;
       this.renderAll();
       this.renderToolOptions();
-      this.setMessage(`Rétabli : ${label}`);
+      this.setMessage(t('msg.redone', { label }));
     }
   }
 }

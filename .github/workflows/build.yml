@@ -150,6 +150,21 @@ jobs:
             -exec cp {} release/ \;
           ls -lh release
 
+      # Copies à nom stable : les liens « latest/download » du README pointent
+      # toujours vers la dernière version, sans avoir à connaître son numéro.
+      - name: Ajouter les noms stables
+        run: |
+          cd release
+          set -- $(ls *_x64-setup.exe 2>/dev/null | head -n1)
+          [ -n "$1" ] && cp "$1" SuperPhoto-Windows-x64-setup.exe || true
+          set -- $(ls *_universal.dmg 2>/dev/null | head -n1)
+          [ -n "$1" ] && cp "$1" SuperPhoto-macOS-universal.dmg || true
+          set -- $(ls *_amd64.AppImage 2>/dev/null | head -n1)
+          [ -n "$1" ] && cp "$1" SuperPhoto-Linux-x86_64.AppImage || true
+          set -- $(ls *_amd64.deb 2>/dev/null | head -n1)
+          [ -n "$1" ] && cp "$1" SuperPhoto-Linux-amd64.deb || true
+          ls -lh
+
       - name: Publier la Release
         uses: softprops/action-gh-release@v2
         with:
@@ -159,16 +174,19 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           generate_release_notes: true
           body: |
-            SuperPhoto — studio de retouche photographique.
+            SuperPhoto — photo retouching studio.
 
-            | Plateforme | Fichier |
+            | Platform | File |
             | --- | --- |
-            | Windows | `*_x64-setup.exe` (NSIS) |
-            | Linux | `*.deb`, `*.AppImage` |
-            | macOS (Apple Silicon + Intel) | `*.dmg` universel |
-            | Web / FTP | `superphoto-web.zip` — à décompresser à la racine du site |
+            | Windows | `SuperPhoto-Windows-x64-setup.exe` (NSIS) |
+            | Linux | `SuperPhoto-Linux-amd64.deb`, `SuperPhoto-Linux-x86_64.AppImage` |
+            | macOS (Apple Silicon + Intel) | `SuperPhoto-macOS-universal.dmg` |
+            | Web / FTP | `superphoto-web.zip` — unzip at the root of your site |
 
-            Aucune signature de code n'est appliquée : au premier lancement, Windows
-            affiche SmartScreen et macOS demande un clic droit → Ouvrir.
+            The versioned files (`SuperPhoto_<version>_*`) are kept alongside the
+            stable names used by the README quick-download links.
+
+            No code signing is applied: on first launch Windows shows SmartScreen
+            and macOS needs a right-click → Open.
           files: release/*
           fail_on_unmatched_files: false

@@ -1,10 +1,13 @@
 ---
 import BrandMark from './BrandMark.astro';
+import DocTabs from './DocTabs.astro';
 ---
-<section class="stage" aria-label="Zone de travail">
+<section class="stage" aria-label="Workspace">
+  <DocTabs />
+
   <div class="stage-ribbon">
-    <span class="ribbon-label">TOILE</span>
-    <span class="ribbon-hint" id="tool-hint">Cliquez pour choisir un calque, glissez pour déplacer son contenu.</span>
+    <span class="ribbon-label" data-i18n="stage.canvas">CANVAS</span>
+    <span class="ribbon-hint" id="tool-hint">Click to pick a layer, drag to move its content.</span>
   </div>
 
   <div class="viewport" id="viewport">
@@ -19,47 +22,58 @@ import BrandMark from './BrandMark.astro';
       <div class="empty-mark">
         <BrandMark decorative />
       </div>
-      <span class="empty-kicker">SUPERPHOTO · PHOTO STUDIO</span>
-      <h1>La retouche photo, sans compromis.</h1>
-      <p>
-        Ouvrez une image ou créez une toile pour commencer. Calques, sélections,
-        courbes, niveaux et tracés Bézier vous attendent dans un espace sombre,
-        précis et rapide.
+      <span class="empty-kicker" data-i18n="stage.emptyKicker">SUPERPHOTO · PHOTO STUDIO</span>
+      <h1 data-i18n="stage.emptyTitle">Photo retouching, without compromise.</h1>
+      <p data-i18n="stage.emptyBody">
+        Open an image or create a canvas to start. Layers, selections, curves,
+        levels and Bézier paths await you in a fast, precise workspace.
       </p>
       <div class="empty-actions">
         <button class="btn primary lg" id="empty-new">
           <svg viewBox="0 0 24 24"><use href="#i-new"></use></svg>
-          Nouveau document
+          <span data-i18n="new.title">New document</span>
         </button>
         <button class="btn ghost lg" id="empty-open">
           <svg viewBox="0 0 24 24"><use href="#i-open"></use></svg>
-          Ouvrir depuis l'ordinateur
+          <span data-i18n="new.openComputer">Open from computer</span>
         </button>
       </div>
       <div class="empty-features">
-        <span>Astro</span><i></i><span>Rust / Tauri</span><i></i><span>Windows · macOS · Linux</span>
+        <span>Astro</span><i></i><span>Rust / Tauri</span><i></i><span data-i18n="stage.emptyFeatures">Windows · macOS · Linux</span>
       </div>
     </div>
   </div>
 
-  <!-- Zoom + plein écran : ancrés en bas à droite de la zone de prévisualisation.
+  <!-- Zoom + plein écran : ancrés en bas à droite de la prévisualisation.
        Placés dans `.stage` (et non en `position: fixed`), ils suivent donc
        instantanément l’ouverture ou la fermeture des panneaux latéraux. -->
-  <div class="stage-zoom" id="stage-zoom" aria-label="Zoom et affichage">
-    <button class="stage-zoom-btn" id="zoom-out" title="Zoom arrière (Ctrl+-)" aria-label="Zoom arrière">
+  <div class="stage-zoom" id="stage-zoom" aria-label="Zoom and display">
+    <button class="stage-zoom-btn" id="zoom-out" title="Zoom out (Ctrl+-)" aria-label="Zoom out (Ctrl+-)" data-i18n-title="stage.zoomOut" data-i18n-aria="stage.zoomOut">
       <svg viewBox="0 0 24 24"><use href="#i-minus"></use></svg>
     </button>
-    <button class="stage-zoom-value" id="zoom-value" title="Zoom 100 % (Ctrl+1)">100 %</button>
-    <button class="stage-zoom-btn" id="zoom-in" title="Zoom avant (Ctrl++)" aria-label="Zoom avant">
+    <button class="stage-zoom-value" id="zoom-value" title="Zoom 100 % (Ctrl+1)" data-i18n-title="stage.zoomValue">100 %</button>
+    <button class="stage-zoom-btn" id="zoom-in" title="Zoom in (Ctrl++)" aria-label="Zoom in (Ctrl++)" data-i18n-title="stage.zoomIn" data-i18n-aria="stage.zoomIn">
       <svg viewBox="0 0 24 24"><use href="#i-plus"></use></svg>
     </button>
     <span class="stage-zoom-sep" aria-hidden="true"></span>
-    <button class="stage-zoom-btn" id="zoom-fit" title="Ajuster à la fenêtre (Ctrl+0)" aria-label="Ajuster à la fenêtre">
+    <button class="stage-zoom-btn" id="zoom-fit" title="Fit to window (Ctrl+0)" aria-label="Fit to window (Ctrl+0)" data-i18n-title="stage.zoomFit" data-i18n-aria="stage.zoomFit">
       <svg viewBox="0 0 24 24"><use href="#i-fit"></use></svg>
     </button>
-    <button class="stage-zoom-btn" id="btn-fullscreen" title="Plein écran (F11)" aria-label="Passer en plein écran" aria-pressed="false">
+    <button class="stage-zoom-btn" id="btn-fullscreen" title="Full screen (F11)" aria-label="Full screen (F11)" aria-pressed="false" data-i18n-title="stage.fullscreen" data-i18n-aria="stage.fullscreen">
       <svg class="fs-icon-enter" viewBox="0 0 24 24"><use href="#i-fullscreen"></use></svg>
       <svg class="fs-icon-exit" viewBox="0 0 24 24"><use href="#i-fullscreen-exit"></use></svg>
     </button>
   </div>
 </section>
+
+<div class="drop-overlay" id="drop-overlay" hidden aria-hidden="true">
+  <div class="drop-card">
+    <span class="drop-mark"><BrandMark decorative /></span>
+    <strong data-i18n="drop.title">Drop to open</strong>
+    <small data-i18n="drop.hint">
+      PNG, JPEG, WebP, AVIF, GIF, TIFF, BMP, SVG, .sps — several files at once
+      open in separate tabs.
+    </small>
+    <em data-i18n="drop.videoHint">Video files open on their first frame.</em>
+  </div>
+</div>

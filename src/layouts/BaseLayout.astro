@@ -7,8 +7,8 @@ interface Props {
 }
 
 const {
-  title = 'SuperPhoto — Studio de retouche photographique',
-  description = 'SuperPhoto, le studio de retouche photographique : thème clair ou sombre, calques, courbes, niveaux et export rapide. Astro + Rust, Windows, macOS et Linux.',
+  title = 'SuperPhoto — Photo retouching studio',
+  description = 'SuperPhoto, the photo retouching studio: light or dark theme, layers, curves, levels, live preview and fast export. Astro + Rust, Windows, macOS and Linux.',
 } = Astro.props;
 
 // `BASE_URL` vaut « / » pour le bureau (Tauri) et « ./ » pour la version web
@@ -23,7 +23,7 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
 ---
 <!doctype html>
 <html
-  lang="fr"
+  lang="en"
   class="theme-light"
   data-theme="light"
   data-theme-mode="light"
@@ -35,7 +35,6 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content={description} />
     <meta name="theme-color" content="#f8f8f8" />
-    <meta name="color-scheme" content="light dark" />
 
     <!-- Marque officielle : SVG adaptatif + repli PNG + icône iOS + manifeste -->
     <link rel="icon" type="image/svg+xml" href={asset('favicon.svg')} />
@@ -89,6 +88,18 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
         root.style.colorScheme = dark ? 'dark' : 'light';
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute('content', dark ? '#121214' : '#f8f8f8');
+
+        // Langue : choix mémorisé, sinon langue du navigateur (anglais par
+        // défaut). Les libellés sont réécrits au chargement du module i18n.
+        try {
+          const stored = localStorage.getItem('superphoto:lang');
+          const supported = ['en', 'fr', 'ja'];
+          const detected = (navigator.languages || [navigator.language || 'en'])
+            .map((code) => String(code).slice(0, 2).toLowerCase())
+            .find((code) => supported.includes(code)) || 'en';
+          const lang = supported.includes(stored) ? stored : detected;
+          root.lang = lang;
+        } catch (_) {}
       })();
     </script>
   </head>

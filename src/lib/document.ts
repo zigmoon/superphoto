@@ -8,6 +8,7 @@ import type {
   TextData,
 } from './types';
 import { canvasContext, createCanvas, deepClone, uid } from './utils';
+import { t } from './i18n';
 
 export const DEFAULT_FONT = 'Inter';
 
@@ -40,13 +41,13 @@ export function createDocument(
   height: number,
   dpi: number,
   background: PhotoDoc['background'],
-  name = 'Sans titre',
+  name = t('new.untitled'),
 ): PhotoDoc {
   const layers: Layer[] = [];
   if (background !== 'transparent') {
     layers.push(
       createLayer(
-        'Arrière-plan',
+        t('layers.background'),
         width,
         height,
         'raster',
@@ -54,7 +55,7 @@ export function createDocument(
       ),
     );
   }
-  const paintLayer = createLayer('Calque 1', width, height, 'raster');
+  const paintLayer = createLayer(`${t('layers.placeholder')} 1`, width, height, 'raster');
   layers.push(paintLayer);
   return {
     name,

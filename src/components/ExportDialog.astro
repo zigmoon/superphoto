@@ -1,55 +1,59 @@
 <div class="modal-backdrop" id="export-modal" role="presentation">
   <div class="dialog export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-title">
     <header class="dialog-head compact">
-      <div class="dialog-kicker">SORTIE</div>
-      <h2 id="export-title">Exporter l’image</h2>
-      <p>Aplatit les calques visibles et enregistre le résultat.</p>
-      <button class="dialog-close" id="export-close" aria-label="Fermer">
+      <div class="dialog-kicker" data-i18n="export.kicker">OUTPUT</div>
+      <h2 id="export-title" data-i18n="export.title">Export the image</h2>
+      <p data-i18n="export.subtitle">Flattens visible layers and saves the result.</p>
+      <button class="dialog-close" id="export-close" aria-label="Close" data-i18n-aria="common.close">
         <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
       </button>
     </header>
 
     <div class="dialog-body">
-      <div class="pane-label">Format</div>
+      <div class="pane-label" data-i18n="export.format">Format</div>
       <div class="format-grid">
         <button class="format-card is-active" data-format="png">
           <strong>PNG</strong>
-          <span>Lossless · transparence</span>
+          <span data-i18n="export.pngHint">Lossless · transparency</span>
         </button>
         <button class="format-card" data-format="jpeg">
           <strong>JPEG</strong>
-          <span>Photo · fond blanc</span>
+          <span data-i18n="export.jpegHint">Photo · white background</span>
         </button>
         <button class="format-card" data-format="webp">
           <strong>WebP</strong>
-          <span>Web · transparence</span>
+          <span data-i18n="export.webpHint">Web · transparency</span>
+        </button>
+        <button class="format-card" data-format="sps">
+          <strong>.SPS</strong>
+          <span data-i18n="export.spsHint">SuperPhoto project · layers kept</span>
         </button>
       </div>
 
       <label class="field-label" for="export-filename">
-        Nom du fichier
+        <span data-i18n="export.filename">File name</span>
         <input type="text" id="export-filename" class="text-input" value="superphoto.png" spellcheck="false" />
       </label>
 
       <div class="range-field compact" id="export-quality-row" hidden>
-        <span>Qualité</span>
+        <span data-i18n="export.quality">Quality</span>
         <output id="export-quality-value">92 %</output>
         <input type="range" id="export-quality" min="10" max="100" step="1" value="92" />
       </div>
 
       <div class="export-summary">
-        <div><span>Dimensions</span><strong id="export-dimensions">—</strong></div>
-        <div><span>Profil</span><strong>sRGB · 8 bits</strong></div>
+        <div><span data-i18n="export.dimensions">Dimensions</span><strong id="export-dimensions">—</strong></div>
+        <div><span data-i18n="export.profile">Profile</span><strong>sRGB · 8-bit</strong></div>
       </div>
-      <p class="dialog-note" id="export-hint">PNG conserve la transparence et la netteté des pixels.</p>
+      <p class="dialog-note" id="export-hint" data-i18n="export.hintPng">PNG keeps transparency and pixel sharpness.</p>
     </div>
 
     <footer class="dialog-foot">
       <div class="foot-spacer"></div>
-      <button class="btn ghost" id="export-cancel">Annuler</button>
+      <button class="btn ghost" id="export-cancel" data-i18n="common.cancel">Cancel</button>
       <button class="btn primary" id="export-run">
         <svg viewBox="0 0 24 24"><use href="#i-export"></use></svg>
-        Exporter
+        <span data-i18n="export.run">Export</span>
       </button>
     </footer>
   </div>

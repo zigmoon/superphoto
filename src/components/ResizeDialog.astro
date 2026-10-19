@@ -1,10 +1,10 @@
 <div class="modal-backdrop" id="resize-modal" role="presentation">
   <div class="dialog resize-dialog" role="dialog" aria-modal="true" aria-labelledby="resize-title">
     <header class="dialog-head compact">
-      <div class="dialog-kicker">DIMENSIONS</div>
-      <h2 id="resize-title">Taille de l’image</h2>
-      <p id="resize-subtitle">Rééchantillonne les pixels de tous les calques.</p>
-      <button class="dialog-close" id="resize-close" aria-label="Fermer">
+      <div class="dialog-kicker" id="resize-kicker" data-i18n="resize.imageKicker">IMAGE SIZE</div>
+      <h2 id="resize-title" data-i18n="resize.imageTitle">Image size</h2>
+      <p id="resize-subtitle" data-i18n="resize.imageSubtitle">Resamples the pixels of every layer.</p>
+      <button class="dialog-close" id="resize-close" aria-label="Close" data-i18n-aria="common.close">
         <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
       </button>
     </header>
@@ -12,55 +12,55 @@
     <div class="dialog-body">
       <div class="new-doc-fields">
         <label class="unit-field">
-          <span>Largeur</span>
+          <span data-i18n="new.width">Width</span>
           <div class="unit-input">
             <input type="number" id="resize-width" min="1" max="16384" step="1" value="1920" />
             <em>px</em>
           </div>
         </label>
         <label class="unit-field">
-          <span>Hauteur</span>
+          <span data-i18n="new.height">Height</span>
           <div class="unit-input">
             <input type="number" id="resize-height" min="1" max="16384" step="1" value="1080" />
             <em>px</em>
           </div>
         </label>
         <label class="unit-field" id="resize-dpi-row">
-          <span>Résolution</span>
+          <span data-i18n="new.resolution">Resolution</span>
           <div class="unit-input">
             <input type="number" id="resize-dpi" min="1" max="1200" step="1" value="72" />
-            <em>ppp</em>
+            <em data-i18n="common.dpi">dpi</em>
           </div>
         </label>
       </div>
 
-      <button class="ratio-lock is-active" id="resize-ratio-lock" aria-pressed="true" title="Conserver les proportions">
+      <button class="ratio-lock is-active" id="resize-ratio-lock" aria-pressed="true" title="Keep proportions" data-i18n-title="new.keepRatio">
         <svg viewBox="0 0 24 24"><use href="#i-lock"></use></svg>
-        <span>Conserver les proportions</span>
+        <span data-i18n="new.keepRatio">Keep proportions</span>
       </button>
 
       <div class="anchor-block" id="resize-anchor-row">
-        <div class="pane-label spaced">Point d’ancrage</div>
-        <div class="anchor-grid" role="group" aria-label="Point d’ancrage">
-          <button data-anchor data-anchor-x="0" data-anchor-y="0" aria-label="Haut gauche"></button>
-          <button data-anchor data-anchor-x="0.5" data-anchor-y="0" aria-label="Haut centre"></button>
-          <button data-anchor data-anchor-x="1" data-anchor-y="0" aria-label="Haut droite"></button>
-          <button data-anchor data-anchor-x="0" data-anchor-y="0.5" aria-label="Milieu gauche"></button>
-          <button data-anchor data-anchor-x="0.5" data-anchor-y="0.5" class="is-active" aria-label="Centre"></button>
-          <button data-anchor data-anchor-x="1" data-anchor-y="0.5" aria-label="Milieu droite"></button>
-          <button data-anchor data-anchor-x="0" data-anchor-y="1" aria-label="Bas gauche"></button>
-          <button data-anchor data-anchor-x="0.5" data-anchor-y="1" aria-label="Bas centre"></button>
-          <button data-anchor data-anchor-x="1" data-anchor-y="1" aria-label="Bas droite"></button>
+        <div class="pane-label spaced" data-i18n="resize.anchor">Anchor</div>
+        <div class="anchor-grid" role="group" aria-label="Anchor" data-i18n-aria="resize.anchor">
+          <button data-anchor data-anchor-x="0" data-anchor-y="0" aria-label="Top left"></button>
+          <button data-anchor data-anchor-x="0.5" data-anchor-y="0" aria-label="Top center"></button>
+          <button data-anchor data-anchor-x="1" data-anchor-y="0" aria-label="Top right"></button>
+          <button data-anchor data-anchor-x="0" data-anchor-y="0.5" aria-label="Middle left"></button>
+          <button data-anchor data-anchor-x="0.5" data-anchor-y="0.5" class="is-active" aria-label="Center"></button>
+          <button data-anchor data-anchor-x="1" data-anchor-y="0.5" aria-label="Middle right"></button>
+          <button data-anchor data-anchor-x="0" data-anchor-y="1" aria-label="Bottom left"></button>
+          <button data-anchor data-anchor-x="0.5" data-anchor-y="1" aria-label="Bottom center"></button>
+          <button data-anchor data-anchor-x="1" data-anchor-y="1" aria-label="Bottom right"></button>
         </div>
       </div>
 
-      <p class="dialog-note" id="resize-note">Rééchantillonnage haute qualité.</p>
+      <p class="dialog-note" id="resize-note" data-i18n="resize.quality">High-quality resampling handled by the browser.</p>
     </div>
 
     <footer class="dialog-foot">
       <div class="foot-spacer"></div>
-      <button class="btn ghost" id="resize-cancel">Annuler</button>
-      <button class="btn primary" id="resize-apply">Appliquer</button>
+      <button class="btn ghost" id="resize-cancel" data-i18n="common.cancel">Cancel</button>
+      <button class="btn primary" id="resize-apply" data-i18n="common.apply">Apply</button>
     </footer>
   </div>
 </div>

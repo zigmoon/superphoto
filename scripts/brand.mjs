@@ -159,6 +159,53 @@ function renderShapes(shapes, { ink, knockout }) {
     .join('\n');
 }
 
+/** Géométrie seule d'une forme, sans attribut de remplissage. */
+function geometryOf(shape) {
+  if (shape.tag === 'path') return `d="${/d="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`;
+  if (shape.tag === 'polygon') return `points="${/points="([^"]*)"/.exec(shape.attrs)?.[1] ?? ''}"`;
+  if (shape.tag === 'circle') {
+    const cx = /cx="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+    const cy = /cy="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+    const r = /r="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+    return `cx="${cx}" cy="${cy}" r="${r}"`;
+  }
+  const x = /x="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+  const y = /y="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+  const w = /width="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+  const h = /height="([^"]*)"/.exec(shape.attrs)?.[1] ?? '0';
+  return `x="${x}" y="${y}" width="${w}" height="${h}"`;
+}
+
+/**
+ * Marque sur fond **transparent**.
+ *
+ * Le logo est un jeu d'hexagones imbriqués séparés par des anneaux. Dans les
+ * exports Illustrator, ces anneaux sont peints avec la couleur du fond
+ * (noir sur la version claire) : c'est ce qui donne l'illusion d'un détourage.
+ * Sur un fond transparent, peindre un anneau ne creuse rien — il faut donc un
+ * masque : les anneaux deviennent des trous réels, et la marque se pose sur
+ * n'importe quel fond sans pastille.
+ */
+function transparentMark(inkShapes, ringShapes, ink, { fillMode = 'mask' } = {}) {
+  const maskId = 'sp-knockout';
+  const rings = ringShapes
+    .map((shape) => `      <${shape.tag} ${geometryOf(shape)} fill="#000"/>`)
+    .join('\n');
+  const inkBody = inkShapes
+    .map((shape) => `    <${shape.tag} ${geometryOf(shape)} fill="${ink}"/>`)
+    .join('\n');
+  if (fillMode === 'none') return inkBody;
+  return `  <defs>
+    <mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="${ARTBOARD}" height="${ARTBOARD}">
+      <rect x="0" y="0" width="${ARTBOARD}" height="${ARTBOARD}" fill="#fff"/>
+${rings}
+    </mask>
+  </defs>
+  <g mask="url(#${maskId})">
+${inkBody}
+  </g>`;
+}
+
 function svgDocument({ viewBox, body, width, extra = '' }) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}"${width ? ` width="${width}" height="${width}"` : ''} role="img"${extra}>
 ${body}
@@ -187,64 +234,96 @@ const ARTBOARD = 500;
 const viewBox = `0 0 ${ARTBOARD} ${ARTBOARD}`;
 step(`plan de travail : ${viewBox}`);
 
+// Structure officielle du logo : les hexagones sont des `<polygon>` (l'encre),
+// les séparations sont des `<path>` peints avec la couleur du fond (la
+// « plaque »). Sur fond transparent, ces séparations doivent devenir de vrais
+// trous : on se fie donc au type de forme, pas à la couleur, car le fichier
+// « noir » laisse les polygones sans attribut `fill` (noir par défaut).
+const INK = noirShapes.filter((shape) => shape.tag === 'polygon' || shape.tag === 'rect' || shape.tag === 'circle');
+const RINGS = noirShapes.filter((shape) => shape.tag === 'path');
+step(`encre : ${INK.length} formes · détourages : ${RINGS.length} anneaux`);
+
+/**
+ * Cadre serré autour de la marque : les icônes occupent toute la surface
+ * demandée (« utilise l'espace avec mon logo »), avec 3 % de marge optique.
+ */
+function fitTransform(shapes, padding = 0.03) {
+  const box = boundingBox(shapes);
+  const size = Math.max(box.w, box.h);
+  if (!Number.isFinite(size) || size <= 0) return '';
+  const scale = (ARTBOARD * (1 - padding * 2)) / size;
+  const offsetX = (ARTBOARD - box.w * scale) / 2 - box.x * scale;
+  const offsetY = (ARTBOARD - box.h * scale) / 2 - box.y * scale;
+  return `translate(${trim(offsetX)} ${trim(offsetY)}) scale(${trim(scale)})`;
+}
+
+/** Marque mise à l'échelle pour remplir le carré de l'icône. */
+function fittedIcon(ink, { padding = 0.03 } = {}) {
+  const body = transparentMark(INK, RINGS, ink);
+  const transform = fitTransform(INK, padding);
+  return `  <g transform="${transform}">
+${body.replace(/^/gm, '  ')}
+  </g>`;
+}
+
 await mkdir(outDir, { recursive: true });
 
-// Marque adaptative : la silhouette suit `currentColor`, les fentes prennent la
-// couleur de la surface (`--brand-knockout`), réglée par thème dans app.css.
-const adaptive = renderShapes(noirShapes, {
-  ink: 'var(--brand-ink, currentColor)',
-  knockout: 'var(--brand-knockout, #ffffff)',
-});
+// Marque adaptative : la silhouette suit `currentColor`, les anneaux creusent
+// de vrais trous (masque) — aucun fond, aucune pastille.
 await writeFile(
   path.join(outDir, 'mark.svg'),
   svgDocument({
     viewBox,
-    body: `  <title>SuperPhoto</title>\n${adaptive}`,
+    body: `  <title>SuperPhoto</title>\n${transparentMark(INK, RINGS, 'var(--brand-ink, currentColor)')}`,
   }),
 );
 
 await writeFile(
   path.join(outDir, 'mark-light.svg'),
-  svgDocument({ viewBox, body: renderShapes(noirShapes, { ink: '#111114', knockout: '#ffffff' }) }),
+  svgDocument({ viewBox, body: transparentMark(INK, RINGS, '#111114') }),
 );
 
 await writeFile(
   path.join(outDir, 'mark-dark.svg'),
-  svgDocument({ viewBox, body: renderShapes(noirShapes, { ink: '#ffffff', knockout: '#121214' }) }),
+  svgDocument({ viewBox, body: transparentMark(INK, RINGS, '#ffffff') }),
 );
 
-// Pastille d'application : carré arrondi sombre + marque blanche. Lisible en
-// 16 px (favicon) comme en 1024 px (icônes Tauri), sur fond clair ou sombre.
-// Le logo occupe 74 % du carré : marge optique identique aux icônes système.
-const ICON_SCALE = 0.74;
-const iconOffset = (ARTBOARD * (1 - ICON_SCALE)) / 2;
-const iconBody = [
-  `  <rect width="${ARTBOARD}" height="${ARTBOARD}" rx="${Math.round(ARTBOARD * 0.225)}" fill="#121214"/>`,
-  `  <g transform="translate(${trim(iconOffset)} ${trim(iconOffset)}) scale(${ICON_SCALE})">`,
-  renderShapes(noirShapes, { ink: '#ffffff', knockout: '#121214' }).replace(/^/gm, '  '),
-  '  </g>',
-].join('\n');
-
+// Icône d'application : plus de carré sombre, la marque remplit le cadre.
 await writeFile(
   path.join(outDir, 'app-icon.svg'),
-  svgDocument({ viewBox, body: `  <title>SuperPhoto</title>\n${iconBody}` }),
+  svgDocument({ viewBox, body: `  <title>SuperPhoto</title>\n${fittedIcon('#111114')}` }),
 );
 
 // Copie importable par les composants (`?raw`), en plus de la copie publique :
-// la marque est ainsi inlinée dans la page, sans requête réseau.
+// la marque est ainsi inlinée dans la page, sans requête réseau. Elle suit la
+// couleur du texte (`currentColor`), donc le thème clair comme le sombre.
 const assetDir = path.join(root, 'src', 'assets', 'brand');
 await mkdir(assetDir, { recursive: true });
 await writeFile(
   path.join(assetDir, 'app-icon.svg'),
-  svgDocument({ viewBox, body: `  <title>SuperPhoto</title>\n${iconBody}` }),
+  svgDocument({
+    viewBox,
+    body: `  <title>SuperPhoto</title>\n${fittedIcon('currentColor')}`,
+  }),
 );
 
-// Favicon : même pastille, cadre carré, aucune marge perdue.
+// Favicon : fond transparent, et encre qui suit le thème du navigateur. Les
+// navigateurs récents appliquent `prefers-color-scheme` au favicon SVG.
+const box = boundingBox(INK);
+const faviconTransform = fitTransform(INK, 0.02);
 await writeFile(
   path.join(root, 'public', 'favicon.svg'),
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" role="img">
   <title>SuperPhoto</title>
-${iconBody}
+  <style>
+    .sp-ink { fill: #111114; }
+    @media (prefers-color-scheme: dark) { .sp-ink { fill: #ffffff; } }
+  </style>
+  <g transform="${faviconTransform}">
+${transparentMark(INK, RINGS, 'currentColor')
+  .replace(/fill="currentColor"/g, 'class="sp-ink"')
+  .replace(/^/gm, '    ')}
+  </g>
 </svg>
 `,
 );
@@ -252,3 +331,4 @@ ${iconBody}
 step(
   'écrit : public/brand/{mark,mark-light,mark-dark,app-icon}.svg, src/assets/brand/app-icon.svg, public/favicon.svg',
 );
+step(`boîte de la marque : ${Math.round(box.w)} × ${Math.round(box.h)} sur ${ARTBOARD}`);

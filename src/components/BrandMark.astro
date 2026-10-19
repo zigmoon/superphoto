@@ -8,9 +8,14 @@
 import iconSource from '../assets/brand/app-icon.svg?raw';
 
 const viewBox = /viewBox="([^"]*)"/.exec(iconSource)?.[1] ?? '0 0 500 500';
+
+// Le SVG est inliné plusieurs fois dans la page (barre, état vide, fenêtres) :
+// le masque reçoit un identifiant unique par instance pour rester valide.
+const suffix = Math.random().toString(36).slice(2, 8);
 const inner = iconSource
   .replace(/^[\s\S]*?<svg[^>]*>/, '')
   .replace(/<\/svg>\s*$/, '')
+  .replace(/sp-knockout/g, `sp-knockout-${suffix}`)
   .trim();
 
 interface Props {
