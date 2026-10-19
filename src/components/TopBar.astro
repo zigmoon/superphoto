@@ -55,6 +55,11 @@ import BrandMark from './BrandMark.astro';
     </button>
     <span class="topbar-sep" aria-hidden="true"></span>
 
+    <!-- N'apparaît que si au moins un greffon est actif (Préférences → Plug-ins). -->
+    <button class="tb-icon plugin-toggle" id="btn-plugins" title="Plug-ins" aria-label="Plug-ins" data-i18n-title="topbar.plugins" data-i18n-aria="topbar.plugins" hidden>
+      <svg viewBox="0 0 24 24"><use href="#i-plugins"></use></svg>
+      <span class="plugin-dot" aria-hidden="true"></span>
+    </button>
     <!-- Ordre demandé : Exporter, puis Préférences tout à droite. -->
     <button class="tb-btn tb-export" id="btn-export" title="Export (Ctrl+S)" data-i18n-title="topbar.exportTitle">
       <svg viewBox="0 0 24 24"><use href="#i-export"></use></svg>

@@ -189,4 +189,6 @@ export interface AdjustmentState {
   params: Record<string, number>;
   channel: CurveChannel;
   curves: Record<CurveChannel, CurvePoint[]>;
+  /** Histogramme de l'aperçu (R, G, B, luminance), 256 classes chacun. */
+  histogram: Record<'r' | 'g' | 'b' | 'rgb', Uint32Array>;
 }

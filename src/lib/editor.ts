@@ -1,10 +1,23 @@
 import {
   ADJUSTMENT_PARAMS,
-  ADJUSTMENT_TITLES,
   adjustImageData,
+  computeHistogram,
+  curveToPath,
   defaultCurves,
   defaultParams,
+  histogramPath,
 } from './adjustments';
+import {
+  PLUGINS,
+  PLUGINS_EVENT,
+  activePlugins,
+  findEffect,
+  findPlugin,
+  loadPluginState,
+  savePluginState,
+  type PluginEffect,
+  type SuperPhotoPlugin,
+} from './plugins';
 import {
   compositeCanvas,
   createDocument,
@@ -196,6 +209,23 @@ interface ToolInfo {
 }
 
 type ExportFormat = 'png' | 'jpeg' | 'webp' | 'sps';
+
+/**
+ * Session d'un effet de greffon : comme pour les réglages, l'aperçu travaille
+ * sur une copie réduite du calque et « Appliquer » recalcule en pleine
+ * résolution. Le hasard des effets étant ensemencé, les deux images sont
+ * identiques au grain près.
+ */
+interface PluginSession {
+  pluginId: string;
+  effectId: string;
+  layerId: string;
+  params: Record<string, number>;
+  original: ImageData;
+  preview: ImageData;
+  previewScale: number;
+  previewCanvas: HTMLCanvasElement;
+}
 
 const TOOLS: Record<ToolId, ToolInfo> = {
   select: { shortcut: 'V', cursor: 'default' },
@@ -500,6 +530,13 @@ export class SuperPhotoEditor {
   private exportFormat: ExportFormat = 'png';
   private saving = false;
 
+  // ── Greffons ─────────────────────────────────────────────────────────────
+  private pluginState = loadPluginState();
+  private pluginSession: PluginSession | null = null;
+  private pluginFrame = 0;
+  private pluginTimer = 0;
+  private pluginLastPreviewAt = 0;
+
   private readonly app: HTMLElement;
   private readonly viewport: HTMLElement;
   private readonly canvasStack: HTMLElement;
@@ -512,6 +549,7 @@ export class SuperPhotoEditor {
   private readonly resizeModal: HTMLElement;
   private readonly exportModal: HTMLElement;
   private readonly preferencesModal: HTMLElement;
+  private readonly pluginModal: HTMLElement;
   private readonly toastHost: HTMLElement;
 
   constructor() {
@@ -527,6 +565,7 @@ export class SuperPhotoEditor {
     this.resizeModal = byId('resize-modal');
     this.exportModal = byId('export-modal');
     this.preferencesModal = byId('preferences-modal');
+    this.pluginModal = byId('plugin-modal');
     this.toastHost = byId('toast-host');
 
     initLanguage();
@@ -559,6 +598,7 @@ export class SuperPhotoEditor {
     this.bindResizeDialog();
     this.bindExportDialog();
     this.bindPreferences();
+    this.bindPluginDialog();
     this.bindKeyboard();
     this.bindDragAndDrop();
     this.bindGlobalButtons();
@@ -2350,16 +2390,31 @@ export class SuperPhotoEditor {
         <div class="curve-shell">
           <svg class="curve-editor" id="curve-editor" viewBox="0 0 256 256" preserveAspectRatio="none" aria-label="${escapeHtml(t('adjust.curves'))}">
             <rect x="0" y="0" width="256" height="256" class="curve-bg"></rect>
+            <path id="curve-histogram" class="curve-histogram" d="${histogramPath(adjustment.histogram[this.curveChannel === 'rgb' ? 'rgb' : this.curveChannel])}"></path>
             ${[1, 2, 3].map((i) => `<line x1="${i * 64}" y1="0" x2="${i * 64}" y2="256" class="curve-grid"/>`).join('')}
             ${[1, 2, 3].map((i) => `<line x1="0" y1="${i * 64}" x2="256" y2="${i * 64}" class="curve-grid"/>`).join('')}
-            <line x1="0" y1="256" x2="256" y2="0" class="curve-diagonal"/>
+            <line x1="0" y1="256" x2="256" y2="0" class="curve-diagonal"></line>
             <path id="curve-path" class="curve-path" d=""></path>
             <g id="curve-points"></g>
           </svg>
         </div>
+        <div class="button-grid">
+          <button class="btn ghost sm" data-action="curve-linear">${escapeHtml(t('opt.curveLinear'))}</button>
+          <button class="btn ghost sm" data-action="curve-contrast">${escapeHtml(t('opt.curveContrast'))}</button>
+          <button class="btn ghost sm" data-action="curve-bright">${escapeHtml(t('opt.curveBright'))}</button>
+        </div>
         <p class="options-hint">${escapeHtml(t('opt.curveHint'))}</p>`;
     } else {
-      controls = params
+      const levelHistogram = adjustment.id === 'levels'
+        ? `<div class="levels-histogram">
+             <svg viewBox="0 0 256 64" preserveAspectRatio="none" aria-hidden="true">
+               <path class="hist-r" d="${histogramPath(adjustment.histogram.r, 256, 64)}"></path>
+               <path class="hist-g" d="${histogramPath(adjustment.histogram.g, 256, 64)}"></path>
+               <path class="hist-b" d="${histogramPath(adjustment.histogram.b, 256, 64)}"></path>
+             </svg>
+           </div>`
+        : '';
+      controls = levelHistogram + params
         .map((param) => {
           const value = adjustment.params[param.key] ?? param.default;
           return `
@@ -2471,6 +2526,345 @@ export class SuperPhotoEditor {
   // ───────────────────────────────────────────────────────────────────────────
   // Preferences
   // ───────────────────────────────────────────────────────────────────────────
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Greffons
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** L'icône de la barre supérieure n'existe que si un greffon est actif. */
+  private syncPluginChrome(): void {
+    const button = document.getElementById('btn-plugins') as HTMLButtonElement | null;
+    const enabled = activePlugins(this.pluginState);
+    if (button) {
+      const visible = enabled.length > 0;
+      button.hidden = !visible;
+      button.classList.toggle('is-enabled', visible);
+      button.title = visible
+        ? `${enabled.map((plugin) => plugin.name).join(' · ')} (Ctrl+Alt+E)`
+        : t('topbar.plugins');
+      button.setAttribute('aria-label', button.title);
+    }
+    this.renderPreferencesPlugins();
+  }
+
+  private bindPluginDialog(): void {
+    this.node<HTMLButtonElement>('btn-plugins').addEventListener('click', () => this.openPluginDialog());
+    this.node<HTMLButtonElement>('plugin-close').addEventListener('click', () => this.cancelPlugin());
+    this.node<HTMLButtonElement>('plugin-cancel').addEventListener('click', () => this.cancelPlugin());
+    this.node<HTMLButtonElement>('plugin-apply').addEventListener('click', () => this.applyPluginEffect());
+    this.node<HTMLButtonElement>('plugin-reset').addEventListener('click', () => this.resetPluginEffect());
+    this.pluginModal.addEventListener('click', (event) => {
+      if (event.target === this.pluginModal) this.cancelPlugin();
+    });
+    this.node<HTMLElement>('plugin-effects').addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>('[data-effect]');
+      if (!button?.dataset.effect) return;
+      this.selectPluginEffect(button.dataset.effect);
+    });
+    this.node<HTMLElement>('plugin-params').addEventListener('input', (event) => {
+      const input = event.target as HTMLInputElement | null;
+      const key = input?.dataset.pluginParam;
+      if (!key || !this.pluginSession) return;
+      this.pluginSession.params[key] = Number(input.value);
+      const output = input.closest('.range-field')?.querySelector('output');
+      if (output) output.textContent = `${input.value}${this.pluginParamUnit(key)}`;
+      this.syncRangeFills();
+      this.schedulePluginPreview();
+    });
+    window.addEventListener(PLUGINS_EVENT, () => this.syncPluginChrome());
+    this.syncPluginChrome();
+  }
+
+  private pluginParamUnit(key: string): string {
+    const session = this.pluginSession;
+    if (!session) return '';
+    const effect = findEffect(session.pluginId, session.effectId);
+    const param = effect?.params.find((item) => item.key === key);
+    return param?.unit ?? '';
+  }
+
+  private pluginForChrome(): SuperPhotoPlugin | null {
+    const enabled = activePlugins(this.pluginState);
+    return enabled[0] ?? findPlugin(PLUGINS[0]?.id ?? '') ?? null;
+  }
+
+  private openPluginDialog(): void {
+    const plugin = this.pluginForChrome();
+    if (!plugin) {
+      this.toast(t('plugin.none'), 'info');
+      return;
+    }
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) {
+      this.toast(t('msg.openFirst'), 'error');
+      return;
+    }
+    if (this.adjustment) this.cancelAdjustment();
+    if (layer.mask && layer.maskEditing) {
+      layer.maskEditing = false;
+      this.layersDirty = true;
+    }
+    const ctx = canvasContext(layer.canvas);
+    const original = ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
+    const previewScale = Math.min(1, MAX_PREVIEW_EDGE / Math.max(layer.canvas.width, layer.canvas.height));
+    const previewCanvas = createCanvas(
+      Math.max(1, Math.round(layer.canvas.width * previewScale)),
+      Math.max(1, Math.round(layer.canvas.height * previewScale)),
+    );
+    let preview = original;
+    if (previewScale < 1) {
+      const previewContext = canvasContext(previewCanvas);
+      previewContext.imageSmoothingQuality = 'medium';
+      previewContext.drawImage(layer.canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+      preview = previewContext.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+    }
+    const effect = plugin.effects[0];
+    if (!effect) return;
+    this.pluginSession = {
+      pluginId: plugin.id,
+      effectId: effect.id,
+      layerId: layer.id,
+      params: this.effectDefaults(plugin, effect),
+      original,
+      preview,
+      previewScale,
+      previewCanvas,
+    };
+    this.pluginLastPreviewAt = 0;
+    this.node('plugin-kicker').textContent = `${plugin.name.toUpperCase()} · v${plugin.version}`;
+    this.node('plugin-title').textContent = plugin.name;
+    this.pluginModal.classList.add('is-open');
+    this.renderPluginEffects();
+    this.selectPluginEffect(effect.id);
+  }
+
+  private effectDefaults(plugin: SuperPhotoPlugin, effect: PluginEffect): Record<string, number> {
+    const params: Record<string, number> = {};
+    for (const param of effect.params) params[param.key] = param.default;
+    void plugin;
+    return params;
+  }
+
+  private renderPluginEffects(): void {
+    const session = this.pluginSession;
+    const plugin = session ? findPlugin(session.pluginId) : null;
+    const host = this.node<HTMLElement>('plugin-effects');
+    if (!plugin || !host) return;
+    host.innerHTML = plugin.effects
+      .map(
+        (effect) => `
+          <button class="plugin-effect${effect.id === session?.effectId ? ' is-active' : ''}"
+                  role="option" aria-selected="${effect.id === session?.effectId}"
+                  data-effect="${effect.id}">
+            <span class="plugin-effect-name">${escapeHtml(t(effect.nameKey))}</span>
+            <span class="plugin-effect-desc">${escapeHtml(t(effect.descKey))}</span>
+          </button>`,
+      )
+      .join('');
+  }
+
+  private selectPluginEffect(effectId: string): void {
+    const session = this.pluginSession;
+    if (!session) return;
+    const effect = findEffect(session.pluginId, effectId);
+    if (!effect) return;
+    session.effectId = effect.id;
+    session.params = this.effectDefaults(findPlugin(session.pluginId)!, effect);
+    this.renderPluginEffects();
+    this.node('plugin-effect-name').textContent = t(effect.nameKey);
+    this.node('plugin-effect-desc').textContent = t(effect.descKey);
+    const layer = this.doc?.layers.find((item) => item.id === session.layerId);
+    this.node('plugin-target').textContent = t('plugin.target', { name: layer?.name ?? '—' });
+    this.renderPluginParams(effect);
+    this.schedulePluginPreview();
+  }
+
+  private renderPluginParams(effect: PluginEffect): void {
+    const host = this.node<HTMLElement>('plugin-params');
+    const session = this.pluginSession;
+    if (!host || !session) return;
+    host.innerHTML = effect.params
+      .map((param) => {
+        const value = session.params[param.key] ?? param.default;
+        return `
+          <label class="range-field">
+            <span>${escapeHtml(t(param.labelKey))}</span>
+            <output>${value}${param.unit ?? ''}</output>
+            <input type="range" min="${param.min}" max="${param.max}" step="${param.step}"
+                   data-plugin-param="${param.key}" value="${value}">
+          </label>`;
+      })
+      .join('');
+    this.syncRangeFills();
+  }
+
+  private resetPluginEffect(): void {
+    const session = this.pluginSession;
+    if (!session) return;
+    const plugin = findPlugin(session.pluginId);
+    const effect = findEffect(session.pluginId, session.effectId);
+    if (!plugin || !effect) return;
+    session.params = this.effectDefaults(plugin, effect);
+    this.renderPluginParams(effect);
+    this.schedulePluginPreview();
+  }
+
+  private schedulePluginPreview(): void {
+    if (this.pluginFrame || this.pluginTimer) return;
+    const elapsed = performance.now() - this.pluginLastPreviewAt;
+    if (elapsed < PREVIEW_MIN_INTERVAL) {
+      this.pluginTimer = window.setTimeout(() => {
+        this.pluginTimer = 0;
+        this.schedulePluginPreview();
+      }, PREVIEW_MIN_INTERVAL - elapsed);
+      return;
+    }
+    this.pluginFrame = window.requestAnimationFrame(() => {
+      this.pluginFrame = 0;
+      this.previewPlugin();
+    });
+  }
+
+  private previewPlugin(): void {
+    const session = this.pluginSession;
+    const doc = this.doc;
+    if (!session || !doc) return;
+    const layer = doc.layers.find((item) => item.id === session.layerId);
+    const effect = findEffect(session.pluginId, session.effectId);
+    if (!layer || !effect) return;
+    this.pluginLastPreviewAt = performance.now();
+    const copy = new ImageData(
+      new Uint8ClampedArray(session.preview.data),
+      session.preview.width,
+      session.preview.height,
+    );
+    // `_scale` = taille de l'aperçu / taille réelle : les effets qui travaillent
+    // en pixels gardent ainsi la même échelle visuelle dans les deux rendus.
+    effect.apply(copy, { ...session.params, _scale: session.previewScale });
+    const ctx = canvasContext(layer.canvas);
+    if (session.previewScale >= 1) {
+      ctx.putImageData(copy, 0, 0);
+    } else {
+      const previewContext = canvasContext(session.previewCanvas);
+      previewContext.clearRect(0, 0, session.previewCanvas.width, session.previewCanvas.height);
+      previewContext.putImageData(copy, 0, 0);
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'low';
+      ctx.drawImage(session.previewCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
+    }
+    this.renderCanvas();
+    this.renderOverlay();
+  }
+
+  private applyPluginEffect(): void {
+    const session = this.pluginSession;
+    const doc = this.doc;
+    if (!session || !doc) return;
+    const layer = doc.layers.find((item) => item.id === session.layerId);
+    const effect = findEffect(session.pluginId, session.effectId);
+    if (!layer || !effect) {
+      this.cancelPlugin();
+      return;
+    }
+    if (this.pluginFrame) cancelAnimationFrame(this.pluginFrame);
+    if (this.pluginTimer) window.clearTimeout(this.pluginTimer);
+    this.pluginFrame = 0;
+    this.pluginTimer = 0;
+    // Le « avant » vient de la copie d'origine, pas de la toile : celle-ci
+    // contient déjà l'aperçu de l'effet, et l'annulation aurait restauré
+    // l'aperçu au lieu des pixels d'origine.
+    const before = createCanvas(session.original.width, session.original.height);
+    canvasContext(before).putImageData(session.original, 0, 0);
+    const result = new ImageData(
+      new Uint8ClampedArray(session.original.data),
+      session.original.width,
+      session.original.height,
+    );
+    effect.apply(result, { ...session.params, _scale: 1 });
+    const ctx = canvasContext(layer.canvas);
+    ctx.putImageData(result, 0, 0);
+    const after = cloneCanvas(layer.canvas);
+    const label = t(effect.nameKey);
+    this.history.push({
+      label: t('plugin.history', { name: label }),
+      undo: () => {
+        const context = canvasContext(layer.canvas);
+        context.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        context.drawImage(before, 0, 0);
+        this.invalidateBounds(layer.id);
+        this.renderAll();
+      },
+      redo: () => {
+        const context = canvasContext(layer.canvas);
+        context.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        context.drawImage(after, 0, 0);
+        this.invalidateBounds(layer.id);
+        this.renderAll();
+      },
+    });
+    this.pluginSession = null;
+    this.pluginModal.classList.remove('is-open');
+    this.layersDirty = true;
+    this.invalidateBounds(layer.id);
+    this.renderAll();
+    this.setMessage(t('plugin.applied', { name: label }));
+  }
+
+  private cancelPlugin(): void {
+    const session = this.pluginSession;
+    if (!session) {
+      this.pluginModal.classList.remove('is-open');
+      return;
+    }
+    if (this.pluginFrame) cancelAnimationFrame(this.pluginFrame);
+    if (this.pluginTimer) window.clearTimeout(this.pluginTimer);
+    this.pluginFrame = 0;
+    this.pluginTimer = 0;
+    const layer = this.doc?.layers.find((item) => item.id === session.layerId);
+    if (layer) {
+      const ctx = canvasContext(layer.canvas);
+      ctx.putImageData(session.original, 0, 0);
+      this.invalidateBounds(layer.id);
+      this.renderAll();
+    }
+    this.pluginSession = null;
+    this.pluginModal.classList.remove('is-open');
+  }
+
+  private renderPreferencesPlugins(): void {
+    const host = document.getElementById('prefs-plugin-list');
+    if (!host) return;
+    host.innerHTML = PLUGINS.map((plugin) => {
+      const enabled = this.pluginState[plugin.id] === true;
+      return `
+        <div class="plugin-card${enabled ? ' is-enabled' : ''}" data-plugin-card="${plugin.id}">
+          <span class="plugin-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#${plugin.icon}"></use></svg></span>
+          <div class="plugin-card-copy">
+            <strong>${escapeHtml(plugin.name)} <em>v${escapeHtml(plugin.version)}</em></strong>
+            <span>${escapeHtml(t(plugin.descriptionKey))}</span>
+            <span class="plugin-card-meta">${plugin.effects.length} ${escapeHtml(t('plugin.effectsCount'))} · ${escapeHtml(plugin.author)}</span>
+          </div>
+          <button class="plugin-toggle-btn${enabled ? ' is-on' : ''}" data-plugin-toggle="${plugin.id}"
+                  role="switch" aria-checked="${enabled}">
+            <span></span>
+          </button>
+        </div>`;
+    }).join('');
+    for (const button of host.querySelectorAll<HTMLButtonElement>('[data-plugin-toggle]')) {
+      button.addEventListener('click', () => {
+        const id = button.dataset.pluginToggle;
+        if (!id) return;
+        this.pluginState = { ...this.pluginState, [id]: !this.pluginState[id] };
+        savePluginState(this.pluginState);
+        this.syncPluginChrome();
+        this.setMessage(
+          this.pluginState[id] ? t('plugin.enabled', { name: findPlugin(id)?.name ?? id }) : t('plugin.disabled', { name: findPlugin(id)?.name ?? id }),
+        );
+      });
+    }
+  }
 
   private bindPreferences(): void {
     this.node<HTMLButtonElement>('prefs-close').addEventListener('click', () => this.closePreferences(true));
@@ -3068,6 +3462,15 @@ export class SuperPhotoEditor {
         break;
       case 'reset-adjustment':
         this.resetAdjustment();
+        break;
+      case 'curve-linear':
+        this.applyCurvePreset('linear');
+        break;
+      case 'curve-contrast':
+        this.applyCurvePreset('contrast');
+        break;
+      case 'curve-bright':
+        this.applyCurvePreset('bright');
         break;
       case 'zoom-fit':
         this.fitToView();
@@ -3819,6 +4222,7 @@ export class SuperPhotoEditor {
       params: defaultParams(id),
       channel: 'rgb',
       curves: defaultCurves(),
+      histogram: computeHistogram(preview),
     };
     this.renderToolOptions();
     window.setTimeout(() => {
@@ -3917,7 +4321,7 @@ export class SuperPhotoEditor {
     layer.text = undefined;
     layer.path = undefined;
     const afterMeta = { kind: layer.kind, text: undefined, path: undefined };
-    const label = ADJUSTMENT_TITLES[adjustment.id];
+    const label = t(`adjust.${adjustment.id}`);
     this.history.push({
       label,
       undo: () => {
@@ -3975,6 +4379,35 @@ export class SuperPhotoEditor {
     this.adjustment.curves = defaultCurves();
     this.adjustment.channel = 'rgb';
     this.curveChannel = 'rgb';
+    this.renderToolOptions();
+    this.scheduleAdjustmentPreview();
+  }
+
+  /** Courbes prêtes à l'emploi : droite, contraste en S, éclaircissement. */
+  private applyCurvePreset(preset: 'linear' | 'contrast' | 'bright'): void {
+    if (!this.adjustment) return;
+    const channel = this.curveChannel;
+    const points: CurvePoint[] = preset === 'linear'
+      ? [{ x: 0, y: 0 }, { x: 255, y: 255 }]
+      : preset === 'contrast'
+        ? [
+            { x: 0, y: 0 },
+            { x: 64, y: 48 },
+            { x: 128, y: 128 },
+            { x: 192, y: 208 },
+            { x: 255, y: 255 },
+          ]
+        : [
+            { x: 0, y: 0 },
+            { x: 64, y: 84 },
+            { x: 128, y: 158 },
+            { x: 192, y: 212 },
+            { x: 255, y: 255 },
+          ];
+    this.adjustment.curves = {
+      ...this.adjustment.curves,
+      [channel]: points,
+    };
     this.renderToolOptions();
     this.scheduleAdjustmentPreview();
   }
@@ -4067,10 +4500,8 @@ export class SuperPhotoEditor {
     if (!svg) return;
     const path = svg.querySelector<SVGPathElement>('#curve-path');
     if (path) {
-      path.setAttribute(
-        'd',
-        points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${255 - point.y}`).join(' '),
-      );
+      // Même courbe lissée (PCHIP) que le rendu : l'écran ne ment pas.
+      path.setAttribute('d', curveToPath(points));
     }
     const group = svg.querySelector<SVGGElement>('#curve-points');
     if (!group) return;
@@ -6551,6 +6982,11 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
+        if (this.pluginModal.classList.contains('is-open')) {
+          this.cancelPlugin();
+          event.preventDefault();
+          return;
+        }
         if (this.adjustment) {
           this.cancelAdjustment();
           this.renderToolOptions();
@@ -6637,6 +7073,11 @@ export class SuperPhotoEditor {
         if (key === 'j') {
           event.preventDefault();
           this.duplicateActiveLayer();
+          return;
+        }
+        if (key === 'e' && event.altKey) {
+          event.preventDefault();
+          this.openPluginDialog();
           return;
         }
         if (key === 'e') {

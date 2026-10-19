@@ -19,6 +19,7 @@ import BrandMark from './BrandMark.astro';
       <button class="prefs-tab is-active" role="tab" aria-selected="true" data-prefs-tab="appearance" data-i18n="prefs.tab.appearance">Appearance</button>
       <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="canvas" data-i18n="prefs.tab.canvas">Canvas</button>
       <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="shortcuts" data-i18n="prefs.tab.shortcuts">Shortcuts</button>
+      <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="plugins" data-i18n="prefs.tab.plugins">Plug-ins</button>
       <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="about" data-i18n="prefs.tab.about">About</button>
     </div>
 
@@ -207,6 +208,21 @@ import BrandMark from './BrandMark.astro';
             <span><kbd>F11</kbd> <em data-i18n="sc.fullscreen">Full screen</em></span>
             <span><kbd>X</kbd> <em data-i18n="sc.swapColors">Swap colors</em></span>
             <span><kbd>D</kbd> <em data-i18n="sc.resetColors">Default colors</em></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="prefs-panel" data-prefs-panel="plugins" hidden>
+        <p class="prefs-section-hint" data-i18n="prefs.pluginsHint">
+          Plug-ins extend the tools without changing the core. An enabled plug-in adds
+          its icon to the top bar. Everything runs locally.
+        </p>
+        <div class="plugin-list" id="prefs-plugin-list"></div>
+        <div class="prefs-section">
+          <div class="prefs-section-title" data-i18n="prefs.pluginsDev">Adding a plug-in</div>
+          <div class="prefs-section-hint" data-i18n="prefs.pluginsDevHint">
+            A plug-in is a recorded entry in src/lib/plugins.ts: a list of effects, each
+            one a pure pixel function with its own sliders. No build step, no network.
           </div>
         </div>
       </section>

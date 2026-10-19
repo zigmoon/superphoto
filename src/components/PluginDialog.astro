@@ -1,0 +1,45 @@
+---
+import BrandMark from './BrandMark.astro';
+---
+<div class="modal-backdrop" id="plugin-modal" role="presentation">
+  <div class="dialog plugin-dialog" role="dialog" aria-modal="true" aria-labelledby="plugin-title">
+    <header class="dialog-head compact plugin-head">
+      <span class="plugin-head-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><use href="#i-plugins"></use></svg>
+      </span>
+      <div class="plugin-head-copy">
+        <div class="dialog-kicker" id="plugin-kicker">PLUGIN</div>
+        <h2 id="plugin-title">Effects 2026</h2>
+        <p id="plugin-subtitle" data-i18n="plugin.subtitle">
+          Glitch and film damage, rendered on your machine. The preview is live on the canvas.
+        </p>
+      </div>
+      <button class="dialog-close" id="plugin-close" aria-label="Close" data-i18n-aria="common.close">
+        <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
+      </button>
+    </header>
+
+    <div class="dialog-body plugin-body">
+      <div class="plugin-effects" id="plugin-effects" role="listbox" aria-label="Effects"></div>
+
+      <div class="plugin-panel">
+        <div class="plugin-effect-head">
+          <h3 id="plugin-effect-name">—</h3>
+          <p id="plugin-effect-desc" class="plugin-effect-desc"></p>
+        </div>
+        <div class="plugin-params" id="plugin-params"></div>
+        <div class="plugin-note">
+          <BrandMark decorative />
+          <span id="plugin-target">—</span>
+        </div>
+      </div>
+    </div>
+
+    <footer class="dialog-foot">
+      <button class="btn ghost sm" id="plugin-reset" data-i18n="common.reset">Reset</button>
+      <span class="foot-spacer"></span>
+      <button class="btn ghost" id="plugin-cancel" data-i18n="common.cancel">Cancel</button>
+      <button class="btn primary" id="plugin-apply" data-i18n="plugin.apply">Apply the effect</button>
+    </footer>
+  </div>
+</div>

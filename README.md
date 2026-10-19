@@ -104,12 +104,23 @@ Click the mask thumbnail to switch between painting pixels and painting the mask
 | **Canvas size** | Extend or crop with a 3×3 anchor. |
 | **Tonality** | Exposure (EV), brightness, blacks. |
 | **Contrast** | Global contrast. |
-| **Color** | Saturation, hue, temperature, tint. |
-| **Levels** | Black point, white point, gamma, output black/white. |
-| **Curves** | Interactive RGB / R / G / B editor. |
+| **Color** | Saturation, hue, temperature, tint — one combined matrix, no colour drift. |
+| **Levels** | Black point, white point, gamma, output black/white, over a live RGB histogram. |
+| **Curves** | Smooth RGB / R / G / B curves, histogram behind the grid, S-curve and lift presets. |
 
 Adjustments preview live on a downscaled copy (fast even on 30 Mpx images) and
-are computed at full resolution when you apply them.
+are computed at full resolution when you apply them. The tone tools run through
+a 256-entry lookup table, so levels and curves cost the same as a brightness
+nudge — and the four curve channels are all applied, not only the one on screen.
+
+### Curves that actually curve
+
+The curve is a **monotone cubic spline** (Fritsch–Carlson / PCHIP), not a chain of
+straight segments and not a Catmull-Rom: it passes through every point you place,
+never overshoots into clipped blacks or blown highlights, and stays smooth at
+every knot. What you see on the grid is the exact lookup table used on the
+pixels, and the histogram of the active channel is drawn behind it so you can
+place the points where the tones really are.
 
 ### Selections that actually feather
 
@@ -134,6 +145,30 @@ drag a handle to resize it, `Shift` keeps the proportions, `Alt` scales from the
 centre. Every gesture lands exactly where the pointer is, at any zoom, and each
 one is a single undo step.
 
+### Plug-ins
+
+SuperPhoto ships with a plug-in system: a plug-in is a recorded entry in
+[`src/lib/plugins.ts`](./src/lib/plugins.ts) — a list of effects, each one a pure
+pixel function with its own sliders. Enable or disable a plug-in in
+**Preferences → Plug-ins**; when at least one is active, its icon appears at the
+right of the top bar (or press `Ctrl/⌘ + Alt + E`).
+
+**Effects 2026** (`v1.0.0`, included) is a film-lab panel in one dialog:
+
+| Effect | What it does |
+| --- | --- |
+| **Chromatic glitch** | Splits the red and blue channels line by line, with jitter and tears |
+| **Block shift** | Displaces horizontal bands — the classic datamosh smear |
+| **Scanlines** | CRT lines plus a soft vignette |
+| **Scratches** | Vertical bright or dark scratches from an old print |
+| **Dust & specks** | Random specks and pinholes across the frame |
+| **Film grain** | Grain sized in pixels, monochrome or chromatic |
+| **VHS tape** | Chroma bleed, sparkle and an unstable tracking band |
+
+The preview is live on the canvas at a reduced resolution, and **Apply**
+recomputes at full resolution with the same seeded randomness — what you see is
+exactly what you get. Every application is one undo step.
+
 ### Export
 
 | Format | Keeps |
@@ -153,7 +188,8 @@ layers — reopen it in SuperPhoto, or drop it on the window like any image.
 - **Three languages**: English (default), French and Japanese. The first launch
   follows your browser language; your choice is remembered in `localStorage`.
 - Keyboard-first: `V M W C U P T N B E S J K L I G Z H` for tools, `[` `]` for
-  the brush size, `Ctrl/⌘ + Z` / `Shift + Ctrl/⌘ + Z` for undo/redo.
+  the brush size, `Ctrl/⌘ + Z` / `Shift + Ctrl/⌘ + Z` for undo/redo, `F1` for the
+  full shortcut list.
 - Zoom and full screen sit at the bottom-right of the preview, exactly where
   SuperPrint puts them, and follow the side panels when they collapse.
 
@@ -285,6 +321,7 @@ Press `F1` (or `?`) anywhere to open the full, always up-to-date list.
 | `Ctrl/⌘ + [` / `Ctrl/⌘ + ]` | move the layer down / up |
 | `Alt + [` / `Alt + ]` | select the layer below / above |
 | `Ctrl/⌘ + T` | free transform (box + handles) |
+| `Ctrl/⌘ + Alt + E` | open the active plug-in (Effects 2026) |
 | `← ↑ → ↓` (`Shift` ×10) | nudge the layer content by 1 px |
 | `Ctrl/⌘ + A` / `Ctrl/⌘ + D` / `Ctrl/⌘ + Shift + I` | select all / deselect / invert |
 | `Del` | clear the selection · **delete the layer** when nothing is selected |
