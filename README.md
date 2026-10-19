@@ -261,7 +261,7 @@ npm run brand:png      # rasterize the icons, favicon and social card
 | **macOS universal** | `SuperPhoto_<version>_universal.dmg` (Apple Silicon + Intel) |
 | **Release GitHub** | on a `v*` tag: every file above, plus stable names for the README links |
 
-Releasing is just `git tag v0.2.0 && git push origin v0.2.0`.
+Releasing is just `git tag v0.2.1 && git push origin v0.2.1`.
 
 ---
 
