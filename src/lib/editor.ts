@@ -549,7 +549,7 @@ export class SuperPhotoEditor {
   private readonly resizeModal: HTMLElement;
   private readonly exportModal: HTMLElement;
   private readonly preferencesModal: HTMLElement;
-  private readonly pluginModal: HTMLElement;
+  private readonly pluginPanel: HTMLElement;
   private readonly toastHost: HTMLElement;
 
   constructor() {
@@ -565,7 +565,7 @@ export class SuperPhotoEditor {
     this.resizeModal = byId('resize-modal');
     this.exportModal = byId('export-modal');
     this.preferencesModal = byId('preferences-modal');
-    this.pluginModal = byId('plugin-modal');
+    this.pluginPanel = byId('plugin-sidebar');
     this.toastHost = byId('toast-host');
 
     initLanguage();
@@ -2534,9 +2534,10 @@ export class SuperPhotoEditor {
   /** L'icône de la barre supérieure n'existe que si un greffon est actif. */
   private syncPluginChrome(): void {
     const button = document.getElementById('btn-plugins') as HTMLButtonElement | null;
+    const separator = document.getElementById('plugins-sep') as HTMLElement | null;
     const enabled = activePlugins(this.pluginState);
+    const visible = enabled.length > 0;
     if (button) {
-      const visible = enabled.length > 0;
       button.hidden = !visible;
       button.classList.toggle('is-enabled', visible);
       button.title = visible
@@ -2544,18 +2545,21 @@ export class SuperPhotoEditor {
         : t('topbar.plugins');
       button.setAttribute('aria-label', button.title);
     }
+    // Le trait sépare visuellement le greffon du groupe Export / Préférences.
+    if (separator) separator.hidden = !visible;
+    if (!visible && this.pluginSession) this.cancelPlugin();
     this.renderPreferencesPlugins();
   }
 
   private bindPluginDialog(): void {
-    this.node<HTMLButtonElement>('btn-plugins').addEventListener('click', () => this.openPluginDialog());
+    this.node<HTMLButtonElement>('btn-plugins').addEventListener('click', () => {
+      if (this.pluginSession) this.cancelPlugin();
+      else this.openPluginPanel();
+    });
     this.node<HTMLButtonElement>('plugin-close').addEventListener('click', () => this.cancelPlugin());
     this.node<HTMLButtonElement>('plugin-cancel').addEventListener('click', () => this.cancelPlugin());
     this.node<HTMLButtonElement>('plugin-apply').addEventListener('click', () => this.applyPluginEffect());
     this.node<HTMLButtonElement>('plugin-reset').addEventListener('click', () => this.resetPluginEffect());
-    this.pluginModal.addEventListener('click', (event) => {
-      if (event.target === this.pluginModal) this.cancelPlugin();
-    });
     this.node<HTMLElement>('plugin-effects').addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest<HTMLElement>('[data-effect]');
       if (!button?.dataset.effect) return;
@@ -2588,7 +2592,12 @@ export class SuperPhotoEditor {
     return enabled[0] ?? findPlugin(PLUGINS[0]?.id ?? '') ?? null;
   }
 
-  private openPluginDialog(): void {
+  /**
+   * Ouvre la trappe des greffons à droite. Elle prend la place d'une colonne du
+   * plan de travail : la toile rétrécit au lieu d'être recouverte, et le zoom /
+   * plein écran ancrés en bas à droite suivent automatiquement.
+   */
+  private openPluginPanel(): void {
     const plugin = this.pluginForChrome();
     if (!plugin) {
       this.toast(t('plugin.none'), 'info');
@@ -2634,9 +2643,17 @@ export class SuperPhotoEditor {
     this.pluginLastPreviewAt = 0;
     this.node('plugin-kicker').textContent = `${plugin.name.toUpperCase()} · v${plugin.version}`;
     this.node('plugin-title').textContent = plugin.name;
-    this.pluginModal.classList.add('is-open');
+    this.pluginPanel.hidden = false;
+    this.app.classList.add('plugins-open');
+    this.node<HTMLButtonElement>('btn-plugins').classList.add('is-active');
     this.renderPluginEffects();
     this.selectPluginEffect(effect.id);
+    // La colonne fait rétrécir la toile : on recadre si l'ajustement automatique
+    // est actif, pour ne pas laisser l'image sortir du cadre.
+    this.invalidateDisplayRect();
+    window.setTimeout(() => {
+      if (this.fitMode) this.fitToView();
+    }, 80);
   }
 
   private effectDefaults(plugin: SuperPhotoPlugin, effect: PluginEffect): Record<string, number> {
@@ -2805,17 +2822,27 @@ export class SuperPhotoEditor {
       },
     });
     this.pluginSession = null;
-    this.pluginModal.classList.remove('is-open');
+    this.closePluginPanel();
     this.layersDirty = true;
     this.invalidateBounds(layer.id);
     this.renderAll();
     this.setMessage(t('plugin.applied', { name: label }));
   }
 
+  private closePluginPanel(): void {
+    this.pluginPanel.hidden = true;
+    this.app.classList.remove('plugins-open');
+    this.node<HTMLButtonElement>('btn-plugins').classList.remove('is-active');
+    this.invalidateDisplayRect();
+    window.setTimeout(() => {
+      if (this.fitMode) this.fitToView();
+    }, 80);
+  }
+
   private cancelPlugin(): void {
     const session = this.pluginSession;
     if (!session) {
-      this.pluginModal.classList.remove('is-open');
+      this.closePluginPanel();
       return;
     }
     if (this.pluginFrame) cancelAnimationFrame(this.pluginFrame);
@@ -2830,7 +2857,7 @@ export class SuperPhotoEditor {
       this.renderAll();
     }
     this.pluginSession = null;
-    this.pluginModal.classList.remove('is-open');
+    this.closePluginPanel();
   }
 
   private renderPreferencesPlugins(): void {
@@ -6982,7 +7009,7 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
-        if (this.pluginModal.classList.contains('is-open')) {
+        if (this.pluginSession) {
           this.cancelPlugin();
           event.preventDefault();
           return;
@@ -7077,7 +7104,8 @@ export class SuperPhotoEditor {
         }
         if (key === 'e' && event.altKey) {
           event.preventDefault();
-          this.openPluginDialog();
+          if (this.pluginSession) this.cancelPlugin();
+          else this.openPluginPanel();
           return;
         }
         if (key === 'e') {

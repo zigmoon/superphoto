@@ -151,7 +151,12 @@ SuperPhoto ships with a plug-in system: a plug-in is a recorded entry in
 [`src/lib/plugins.ts`](./src/lib/plugins.ts) — a list of effects, each one a pure
 pixel function with its own sliders. Enable or disable a plug-in in
 **Preferences → Plug-ins**; when at least one is active, its icon appears at the
-right of the top bar (or press `Ctrl/⌘ + Alt + E`).
+right of the top bar, separated from Export (`Ctrl/⌘ + Alt + E`).
+
+Clicking that icon opens a **drawer docked to the right of the workspace** — not
+a floating dialog: it takes a column of its own, the canvas resizes to fit, and
+the zoom / full-screen controls follow. A second click, the `×`, `Esc` or
+**Cancel** closes it and restores the original pixels.
 
 **Effects 2026** (`v1.0.0`, included) is a film-lab panel in one dialog:
 

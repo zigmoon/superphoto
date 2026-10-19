@@ -67,6 +67,7 @@
   --status-h: 30px;
   --left-w: 292px;
   --right-w: 334px;
+  --plugin-w: 306px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
@@ -329,6 +330,39 @@ html.reduce-motion *::after {
 
 .app-shell.hide-left.hide-right .workspace {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* Trappe des greffons : une colonne de plus à droite du panneau d'outils. */
+.app-shell.plugins-open .workspace {
+  grid-template-columns: var(--left-w) minmax(0, 1fr) var(--right-w) var(--plugin-w);
+}
+
+.app-shell.plugins-open.hide-left .workspace {
+  grid-template-columns: minmax(0, 1fr) var(--right-w) var(--plugin-w);
+}
+
+.app-shell.plugins-open.hide-right .workspace {
+  grid-template-columns: var(--left-w) minmax(0, 1fr) var(--plugin-w);
+}
+
+.app-shell.plugins-open.hide-left.hide-right .workspace {
+  grid-template-columns: minmax(0, 1fr) var(--plugin-w);
+}
+
+/* Sur un écran étroit, la trappe des greffons remplace le panneau d'outils
+   plutôt que de comprimer la toile à néant. */
+@media (max-width: 1280px) {
+  .app-shell.plugins-open .workspace {
+    grid-template-columns: var(--left-w) minmax(0, 1fr) var(--plugin-w);
+  }
+
+  .app-shell.plugins-open .tools-sidebar {
+    display: none;
+  }
+
+  .app-shell.plugins-open.hide-left .workspace {
+    grid-template-columns: minmax(0, 1fr) var(--plugin-w);
+  }
 }
 
 .app-shell.hide-left .layers-sidebar,
@@ -2966,32 +3000,18 @@ html.theme-dark .segmented button.is-active {
 
 /* ── Plug-ins ──────────────────────────────────────────────────────────── */
 
-.plugin-dialog {
-  width: min(880px, calc(100vw - 32px));
+/* Trappe ancrée à droite : c'est une colonne du plan de travail, pas une
+   fenêtre par-dessus. La toile rétrécit, le zoom et le plein écran suivent.
+   Pas d'animation d'entrée : une colonne dockée doit apparaître à la frame
+   suivante, et une animation figée (onglet en arrière-plan) laisserait la
+   trappe invisible. */
+.plugin-sidebar {
+  border-left: 1px solid var(--line);
+  width: var(--plugin-w);
 }
 
 .plugin-head {
-  display: flex;
   align-items: flex-start;
-  gap: 12px;
-}
-
-.plugin-head-icon {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  flex: none;
-  margin-top: 2px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--bg-sunken);
-  color: var(--text);
-}
-
-.plugin-head-icon svg {
-  width: 20px;
-  height: 20px;
 }
 
 .plugin-head-copy {
@@ -3000,37 +3020,38 @@ html.theme-dark .segmented button.is-active {
 }
 
 .plugin-head-copy h2 {
-  margin: 2px 0 4px;
+  margin-top: 3px;
+  font-size: 13.5px;
 }
 
-.plugin-head-copy p {
+.plugin-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.plugin-subtitle {
   margin: 0;
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 11.5px;
+  line-height: 1.55;
   color: var(--text-faint);
-}
-
-.plugin-body {
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
 }
 
 .plugin-effects {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 46vh;
-  overflow: auto;
-  padding-right: 4px;
+  gap: 3px;
 }
 
 .plugin-effect {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 9px 11px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -3057,6 +3078,7 @@ html.theme-dark .segmented button.is-active {
 }
 
 .plugin-effect-desc {
+  margin: 0;
   font-size: 11px;
   line-height: 1.45;
   color: var(--text-faint);
@@ -3069,8 +3091,8 @@ html.theme-dark .segmented button.is-active {
 .plugin-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px 15px;
+  gap: 11px;
+  padding: 12px 13px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg-sunken);
@@ -3078,15 +3100,8 @@ html.theme-dark .segmented button.is-active {
 
 .plugin-effect-head h3 {
   margin: 0 0 3px;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
-}
-
-.plugin-effect-desc {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--text-faint);
 }
 
 .plugin-params {
@@ -3099,8 +3114,6 @@ html.theme-dark .segmented button.is-active {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line-soft);
   font-size: 11px;
   color: var(--text-faint);
 }
@@ -3112,9 +3125,25 @@ html.theme-dark .segmented button.is-active {
   color: var(--brand-ink);
 }
 
+.plugin-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
 /* Point d'état sur l'icône de la barre supérieure. */
 .plugin-toggle {
   position: relative;
+}
+
+.plugin-toggle.is-active {
+  background: var(--bg-raised);
+  border-color: var(--line-strong);
+  color: var(--text);
 }
 
 .plugin-dot {
@@ -3124,7 +3153,7 @@ html.theme-dark .segmented button.is-active {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--text-dim);
   box-shadow: 0 0 0 2px var(--bg-base);
   pointer-events: none;
 }
@@ -3237,13 +3266,9 @@ html.theme-dark .segmented button.is-active {
   transform: translateX(18px);
 }
 
-@media (max-width: 760px) {
-  .plugin-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .plugin-effects {
-    max-height: 30vh;
+@media (prefers-reduced-motion: reduce) {
+  .plugin-toggle-btn span {
+    transition: none;
   }
 }
 

@@ -673,6 +673,7 @@ const D: Record<string, [string, string, string]> = {
     'グリッチとフィルムの損傷をローカルで処理します。プレビューはキャンバスに即時表示されます。',
   ],
   'plugin.apply': ['Apply the effect', 'Appliquer l’effet', 'エフェクトを適用'],
+  'plugin.applyShort': ['Apply', 'Appliquer', '適用'],
   'plugin.effectsCount': ['effects', 'effets', 'エフェクト'],
   'plugin.target': ['Active layer: {name}', 'Calque actif : {name}', 'アクティブレイヤー：{name}'],
   'plugin.history': ['Effect · {name}', 'Effet · {name}', 'エフェクト · {name}'],
