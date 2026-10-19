@@ -214,7 +214,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          app=$(find "${{ matrix.bundle }}" -maxdepth 3 -name '*.app' | head -n1)
+          # `|| true` : sous `-eo pipefail`, un `head` qui ferme le tube envoie
+          # SIGPIPE à `find` et ferait échouer l'étape.
+          app=$(find "${{ matrix.bundle }}" -maxdepth 3 -name '*.app' | head -n1 || true)
           [ -z "$app" ] && { echo "Aucun .app trouvé."; exit 0; }
           echo "── codesign ──"; codesign -dv --verbose=2 "$app" 2>&1 || true
           echo "── spctl ──";   spctl -a -vvv -t exec "$app" 2>&1 || true
