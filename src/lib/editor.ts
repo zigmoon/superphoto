@@ -438,6 +438,8 @@ export class SuperPhotoEditor {
   private stampSource: Point | null = null;
   private patchSourceRect: Rect | null = null;
   private autosaveTimer = 0;
+  private autosaveVersion = 0;
+  private autosaveSavedVersion = 0;
   private autosaveState: 'off' | 'idle' | 'saving' | 'saved' | 'error' = 'idle';
   private autosaveAt = 0;
   private lastSessionAt = 0;
@@ -695,6 +697,16 @@ export class SuperPhotoEditor {
       this.renderToolOptions();
       this.syncChrome();
       this.scheduleAutosave(200);
+      if (this.tabs.length === 0) {
+        // Plus aucun onglet : la session doit disparaître, sinon un
+        // rechargement ressusciterait des documents fermés.
+        window.clearTimeout(this.autosaveTimer);
+        this.autosaveTimer = 0;
+        this.lastSessionAt = 0;
+        this.autosaveState = 'idle';
+        void clearSession();
+        this.syncAutosaveBadge();
+      }
       return;
     }
     if (this.activeTabId === tabId) {
@@ -768,7 +780,16 @@ export class SuperPhotoEditor {
   }
 
   private scheduleAutosave(delay = 1500): void {
-    if (!this.preferences.autosave || !this.doc) return;
+    if (!this.preferences.autosave || this.tabs.length === 0) return;
+    // Chaque changement incrémente la version : une sauvegarde qui se termine
+    // alors que d'autres modifications sont arrivées se reprogramme, sinon la
+    // session resterait figée sur un état intermédiaire (fermeture d'onglet,
+    // création rapide de plusieurs documents…).
+    this.autosaveVersion += 1;
+    this.armAutosave(delay);
+  }
+
+  private armAutosave(delay: number): void {
     window.clearTimeout(this.autosaveTimer);
     this.autosaveTimer = window.setTimeout(() => {
       this.autosaveTimer = 0;
@@ -784,7 +805,12 @@ export class SuperPhotoEditor {
   }
 
   private async runAutosave(): Promise<void> {
-    if (!this.preferences.autosave || this.tabs.length === 0 || this.autosaveState === 'saving') return;
+    if (!this.preferences.autosave || this.tabs.length === 0) return;
+    if (this.autosaveState === 'saving') {
+      this.armAutosave(400);
+      return;
+    }
+    const version = this.autosaveVersion;
     this.autosaveState = 'saving';
     this.syncAutosaveBadge();
     try {
@@ -793,11 +819,15 @@ export class SuperPhotoEditor {
       this.autosaveState = 'saved';
       this.autosaveAt = Date.now();
       this.lastSessionAt = this.autosaveAt;
+      this.autosaveSavedVersion = version;
     } catch (error) {
       this.autosaveState = 'error';
       console.warn('Automatic save unavailable', error);
     }
     this.syncAutosaveBadge();
+    if (this.tabs.length > 0 && this.autosaveVersion !== this.autosaveSavedVersion) {
+      this.armAutosave(350);
+    }
   }
 
   private syncAutosaveBadge(): void {
