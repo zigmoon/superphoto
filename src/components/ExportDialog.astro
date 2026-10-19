@@ -1,0 +1,56 @@
+<div class="modal-backdrop" id="export-modal" role="presentation">
+  <div class="dialog export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-title">
+    <header class="dialog-head compact">
+      <div class="dialog-kicker">SORTIE</div>
+      <h2 id="export-title">Exporter l’image</h2>
+      <p>Aplatit les calques visibles et enregistre le résultat.</p>
+      <button class="dialog-close" id="export-close" aria-label="Fermer">
+        <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
+      </button>
+    </header>
+
+    <div class="dialog-body">
+      <div class="pane-label">Format</div>
+      <div class="format-grid">
+        <button class="format-card is-active" data-format="png">
+          <strong>PNG</strong>
+          <span>Lossless · transparence</span>
+        </button>
+        <button class="format-card" data-format="jpeg">
+          <strong>JPEG</strong>
+          <span>Photo · fond blanc</span>
+        </button>
+        <button class="format-card" data-format="webp">
+          <strong>WebP</strong>
+          <span>Web · transparence</span>
+        </button>
+      </div>
+
+      <label class="field-label" for="export-filename">
+        Nom du fichier
+        <input type="text" id="export-filename" class="text-input" value="superphoto.png" spellcheck="false" />
+      </label>
+
+      <div class="range-field compact" id="export-quality-row" hidden>
+        <span>Qualité</span>
+        <output id="export-quality-value">92 %</output>
+        <input type="range" id="export-quality" min="10" max="100" step="1" value="92" />
+      </div>
+
+      <div class="export-summary">
+        <div><span>Dimensions</span><strong id="export-dimensions">—</strong></div>
+        <div><span>Profil</span><strong>sRGB · 8 bits</strong></div>
+      </div>
+      <p class="dialog-note" id="export-hint">PNG conserve la transparence et la netteté des pixels.</p>
+    </div>
+
+    <footer class="dialog-foot">
+      <div class="foot-spacer"></div>
+      <button class="btn ghost" id="export-cancel">Annuler</button>
+      <button class="btn primary" id="export-run">
+        <svg viewBox="0 0 24 24"><use href="#i-export"></use></svg>
+        Exporter
+      </button>
+    </footer>
+  </div>
+</div>

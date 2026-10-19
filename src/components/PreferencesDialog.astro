@@ -1,0 +1,202 @@
+<div class="modal-backdrop" id="preferences-modal" role="presentation">
+  <div class="dialog preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="prefs-title">
+    <header class="dialog-head compact prefs-head">
+      <span class="prefs-gear" aria-hidden="true">⚙</span>
+      <div class="prefs-head-copy">
+        <div class="dialog-kicker">SUPERPHOTO</div>
+        <h2 id="prefs-title">Préférences</h2>
+        <p>Apparence, toile, rendu et raccourcis. Les réglages sont conservés sur cet appareil.</p>
+      </div>
+      <button class="dialog-close" id="prefs-close" aria-label="Fermer">
+        <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
+      </button>
+    </header>
+
+    <div class="prefs-tabs" role="tablist" aria-label="Sections des préférences">
+      <button class="prefs-tab is-active" role="tab" aria-selected="true" data-prefs-tab="appearance">Apparence</button>
+      <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="canvas">Toile</button>
+      <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="shortcuts">Raccourcis</button>
+      <button class="prefs-tab" role="tab" aria-selected="false" data-prefs-tab="about">À propos</button>
+    </div>
+
+    <div class="dialog-body prefs-body">
+      <section class="prefs-panel" data-prefs-panel="appearance">
+        <div class="prefs-section">
+          <div class="prefs-section-title">Thème</div>
+          <div class="prefs-section-hint">Le clair reprend la palette de SuperPrint ; le sombre est celui du studio photo.</div>
+          <div class="prefs-choice-row" data-pref="theme">
+            <button class="prefs-choice" data-value="light">
+              <svg viewBox="0 0 24 24"><use href="#i-sun"></use></svg>
+              <span>Clair</span>
+            </button>
+            <button class="prefs-choice" data-value="dark">
+              <svg viewBox="0 0 24 24"><use href="#i-moon"></use></svg>
+              <span>Sombre</span>
+            </button>
+            <button class="prefs-choice" data-value="system">
+              <svg viewBox="0 0 24 24"><use href="#i-desktop"></use></svg>
+              <span>Système</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Couleur d’accent</div>
+          <div class="prefs-section-hint">Sélections, boutons principaux et repères actifs.</div>
+          <div class="accent-row" data-pref="accent">
+            <button class="accent-dot" data-value="orange" title="Orange" aria-label="Orange"><i></i></button>
+            <button class="accent-dot" data-value="ink" title="Encre" aria-label="Encre"><i></i></button>
+            <button class="accent-dot" data-value="blue" title="Bleu" aria-label="Bleu"><i></i></button>
+            <button class="accent-dot" data-value="green" title="Vert" aria-label="Vert"><i></i></button>
+            <button class="accent-dot" data-value="rose" title="Rose" aria-label="Rose"><i></i></button>
+          </div>
+        </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Animations</div>
+          <div class="prefs-section-hint">Réduites : aucune transition, aucune pulsation. L’interface répond instantanément.</div>
+          <div class="prefs-choice-row compact" data-pref="motion">
+            <button class="prefs-choice" data-value="full"><span>Normales</span></button>
+            <button class="prefs-choice" data-value="reduced"><span>Réduites</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="prefs-panel" data-prefs-panel="canvas" hidden>
+        <div class="prefs-section">
+          <div class="prefs-section-title">Damier de transparence</div>
+          <div class="prefs-section-hint">Le fond derrière les zones transparentes de l’image.</div>
+          <div class="prefs-choice-row compact" data-pref="checker">
+            <button class="prefs-choice" data-value="auto"><span>Automatique</span></button>
+            <button class="prefs-choice" data-value="light"><span>Clair</span></button>
+            <button class="prefs-choice" data-value="dark"><span>Sombre</span></button>
+          </div>
+        </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Qualité de rendu</div>
+          <div class="prefs-section-hint">Rapide privilégie la fluidité sur les très grandes images ; précise soigne le rééchantillonnage.</div>
+          <div class="prefs-choice-row compact" data-pref="quality">
+            <button class="prefs-choice" data-value="fast"><span>Rapide</span></button>
+            <button class="prefs-choice" data-value="balanced"><span>Équilibrée</span></button>
+            <button class="prefs-choice" data-value="precise"><span>Précise</span></button>
+          </div>
+        </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Affichage</div>
+          <label class="prefs-switch">
+            <span>
+              <strong>Coordonnées du curseur</strong>
+              <small>Affiche x / y dans la barre d’état.</small>
+            </span>
+            <input type="checkbox" data-pref-toggle="coordinates" />
+          </label>
+          <label class="prefs-switch">
+            <span>
+              <strong>Lisser le zoom</strong>
+              <small>Désactivé : les pixels restent nets au-delà de 400 %.</small>
+            </span>
+            <input type="checkbox" data-pref-toggle="smoothZoom" />
+          </label>
+          <label class="prefs-switch">
+            <span>
+              <strong>Ajuster au redimensionnement</strong>
+              <small>Recadre la vue quand la fenêtre change de taille.</small>
+            </span>
+            <input type="checkbox" data-pref-toggle="autoFit" />
+          </label>
+        </div>
+      </section>
+
+      <section class="prefs-panel" data-prefs-panel="shortcuts" hidden>
+        <div class="prefs-section">
+          <div class="prefs-section-title">Outils</div>
+          <div class="shortcut-grid">
+            <span><kbd>V</kbd> Sélection</span>
+            <span><kbd>M</kbd> Zone de sélection</span>
+            <span><kbd>C</kbd> Recadrage</span>
+            <span><kbd>U</kbd> Objets</span>
+            <span><kbd>P</kbd> Plume</span>
+            <span><kbd>T</kbd> Texte</span>
+            <span><kbd>I</kbd> Pipette</span>
+            <span><kbd>G</kbd> Dégradé</span>
+            <span><kbd>Z</kbd> Zoom</span>
+            <span><kbd>H</kbd> Main</span>
+            <span><kbd>Espace</kbd> Main temporaire</span>
+            <span><kbd>Échap</kbd> Annuler l’outil en cours</span>
+          </div>
+        </div>
+        <div class="prefs-section">
+          <div class="prefs-section-title">Fichier</div>
+          <div class="shortcut-grid">
+            <span><kbd>Ctrl N</kbd> Nouveau document</span>
+            <span><kbd>Ctrl O</kbd> Ouvrir une image</span>
+            <span><kbd>Ctrl S</kbd> Exporter</span>
+            <span><kbd>Ctrl ,</kbd> Préférences</span>
+            <span><kbd>Ctrl Z</kbd> Annuler</span>
+            <span><kbd>Ctrl Y</kbd> Rétablir</span>
+          </div>
+        </div>
+        <div class="prefs-section">
+          <div class="prefs-section-title">Vue</div>
+          <div class="shortcut-grid">
+            <span><kbd>Ctrl 0</kbd> Ajuster à la fenêtre</span>
+            <span><kbd>Ctrl 1</kbd> Zoom 100 %</span>
+            <span><kbd>Ctrl +</kbd> Zoom avant</span>
+            <span><kbd>Ctrl −</kbd> Zoom arrière</span>
+            <span><kbd>Ctrl molette</kbd> Zoom sous le curseur</span>
+            <span><kbd>Suppr</kbd> Effacer la sélection</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="prefs-panel" data-prefs-panel="about" hidden>
+        <div class="about-card">
+          <div class="about-brand">
+            <span class="about-mark"><svg viewBox="0 0 32 32"><use href="#i-logo"></use></svg></span>
+            <div>
+              <strong>SUPERPHOTO</strong>
+              <small>STUDIO DE RETOUCHE · v0.1.0</small>
+            </div>
+          </div>
+          <p>
+            Studio de retouche photographique inspiré de GIMP et Photoshop :
+            calques, sélections, recadrage, objets, plume Bézier, texte, pipette,
+            dégradés, tonalité, contraste, couleur, niveaux et courbes.
+          </p>
+        </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Technologies</div>
+          <div class="about-grid">
+            <span>Interface</span><strong>Astro 7 · TypeScript</strong>
+            <span>Moteur desktop</span><strong>Rust · Tauri 2</strong>
+            <span>Rendu</span><strong>Canvas 2D · compositions par calque</strong>
+            <span>Formats</span><strong>PNG · JPEG · WebP · TIFF (import)</strong>
+            <span>Plateformes</span><strong>Windows · macOS · Linux</strong>
+          </div>
+        </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Crédits</div>
+          <div class="about-grid">
+            <span>Conception</span><strong>Simon Dupont-Gellert · Clémence Brunet</strong>
+            <span>Studio</span><strong>SuperPhoto / SuperPrint</strong>
+            <span>Licence</span><strong>MIT</strong>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="dialog-foot prefs-foot">
+      <button class="btn ghost" id="prefs-reset">Réinitialiser</button>
+      <div class="foot-spacer"></div>
+      <button class="btn ghost" id="prefs-cancel">Annuler</button>
+      <button class="btn primary" id="prefs-apply">
+        <svg viewBox="0 0 24 24"><use href="#i-check"></use></svg>
+        Appliquer
+      </button>
+    </footer>
+  </div>
+</div>

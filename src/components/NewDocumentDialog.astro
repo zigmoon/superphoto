@@ -1,0 +1,114 @@
+<div class="modal-backdrop is-open" id="new-document-modal" role="presentation">
+  <div class="dialog new-doc-dialog" role="dialog" aria-modal="true" aria-labelledby="new-doc-title">
+    <header class="dialog-head">
+      <div class="dialog-kicker">SUPERPHOTO</div>
+      <h2 id="new-doc-title">Nouveau document</h2>
+      <p>Définissez la toile de départ : dimensions en pixels, résolution et fond.</p>
+      <button class="dialog-close" id="new-close" aria-label="Fermer">
+        <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
+      </button>
+    </header>
+
+    <div class="dialog-body new-doc-body">
+      <section class="preset-pane" aria-label="Formats prédéfinis">
+        <div class="pane-label">Formats rapides</div>
+        <div class="preset-grid">
+          <button class="preset-card is-active" data-preset="screen" data-width="1920" data-height="1080" data-dpi="72">
+            <span class="preset-icon"><svg viewBox="0 0 24 24"><use href="#i-image-size"></use></svg></span>
+            <strong>Écran HD</strong>
+            <small>1920 × 1080 · 72 ppp</small>
+          </button>
+          <button class="preset-card" data-preset="photo" data-width="3000" data-height="2000" data-dpi="300">
+            <span class="preset-icon"><svg viewBox="0 0 24 24"><use href="#i-image-size"></use></svg></span>
+            <strong>Photo 6 Mpx</strong>
+            <small>3000 × 2000 · 300 ppp</small>
+          </button>
+          <button class="preset-card" data-preset="a4" data-width="2480" data-height="3508" data-dpi="300">
+            <span class="preset-icon"><svg viewBox="0 0 24 24"><use href="#i-canvas-size"></use></svg></span>
+            <strong>A4 300 ppp</strong>
+            <small>2480 × 3508 · 300 ppp</small>
+          </button>
+          <button class="preset-card" data-preset="square" data-width="2048" data-height="2048" data-dpi="72">
+            <span class="preset-icon"><svg viewBox="0 0 24 24"><use href="#i-marquee"></use></svg></span>
+            <strong>Carré</strong>
+            <small>2048 × 2048 · 72 ppp</small>
+          </button>
+          <button class="preset-card" data-preset="uhd" data-width="3840" data-height="2160" data-dpi="72">
+            <span class="preset-icon"><svg viewBox="0 0 24 24"><use href="#i-image-size"></use></svg></span>
+            <strong>Ultra HD</strong>
+            <small>3840 × 2160 · 72 ppp</small>
+          </button>
+          <button class="preset-card" data-preset="portrait" data-width="1200" data-height="1600" data-dpi="300">
+            <span class="preset-icon"><svg viewBox="0 0 24 24"><use href="#i-canvas-size"></use></svg></span>
+            <strong>Portrait</strong>
+            <small>1200 × 1600 · 300 ppp</small>
+          </button>
+        </div>
+        <div class="preset-note">
+          <svg viewBox="0 0 24 24"><use href="#i-info"></use></svg>
+          <span>Les formats rapides remplissent les champs. Vous pouvez tout ajuster à droite.</span>
+        </div>
+      </section>
+
+      <section class="settings-pane" aria-label="Format personnalisé">
+        <div class="pane-label">Format personnalisé</div>
+
+        <div class="new-doc-fields">
+          <label class="unit-field">
+            <span>Largeur</span>
+            <div class="unit-input">
+              <input type="number" id="new-width" min="1" max="16384" step="1" value="1920" inputmode="numeric" />
+              <em>px</em>
+            </div>
+          </label>
+          <label class="unit-field">
+            <span>Hauteur</span>
+            <div class="unit-input">
+              <input type="number" id="new-height" min="1" max="16384" step="1" value="1080" inputmode="numeric" />
+              <em>px</em>
+            </div>
+          </label>
+          <label class="unit-field">
+            <span>Résolution</span>
+            <div class="unit-input">
+              <input type="number" id="new-dpi" min="1" max="1200" step="1" value="72" inputmode="numeric" />
+              <em>ppp</em>
+            </div>
+          </label>
+        </div>
+
+        <button class="ratio-lock" id="new-ratio-lock" aria-pressed="false" title="Conserver les proportions">
+          <svg viewBox="0 0 24 24"><use href="#i-lock"></use></svg>
+          <span>Conserver les proportions</span>
+        </button>
+
+        <div class="pane-label spaced">Fond du document</div>
+        <div class="segmented" id="new-background">
+          <button data-bg="white" class="is-active">Blanc</button>
+          <button data-bg="transparent">Transparent</button>
+          <button data-bg="black">Noir</button>
+        </div>
+
+        <div class="new-preview-wrap">
+          <div class="new-preview-stage">
+            <div class="new-preview-box" id="new-preview-box"></div>
+          </div>
+          <span class="new-preview-label" id="new-preview-label">1920 × 1080 px · 72 ppp</span>
+        </div>
+      </section>
+    </div>
+
+    <footer class="dialog-foot">
+      <button class="btn ghost" id="new-open-computer">
+        <svg viewBox="0 0 24 24"><use href="#i-open"></use></svg>
+        Ouvrir depuis l'ordinateur
+      </button>
+      <div class="foot-spacer"></div>
+      <button class="btn ghost" id="new-cancel">Annuler</button>
+      <button class="btn primary" id="new-create">
+        <svg viewBox="0 0 24 24"><use href="#i-check"></use></svg>
+        Ouvrir
+      </button>
+    </footer>
+  </div>
+</div>

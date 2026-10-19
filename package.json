@@ -1,0 +1,31 @@
+{
+  "name": "superphoto",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SuperPhoto — studio de retouche photographique Astro + Rust (Tauri), Windows / macOS / Linux.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:build:debug": "tauri build --debug --no-bundle"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@tauri-apps/cli": "^2.12.3",
+    "astro": "^7.4.0",
+    "typescript": "^6.0.3"
+  }
+}

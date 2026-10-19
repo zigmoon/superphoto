@@ -1,0 +1,41 @@
+<section class="stage" aria-label="Zone de travail">
+  <div class="stage-ribbon">
+    <span class="ribbon-label">TOILE</span>
+    <span class="ribbon-hint" id="tool-hint">Cliquez pour choisir un calque, glissez pour déplacer son contenu.</span>
+  </div>
+
+  <div class="viewport" id="viewport">
+    <div class="canvas-pad" id="canvas-pad">
+      <div class="canvas-stack" id="canvas-stack" style="display: none;">
+        <canvas id="display-canvas" width="1" height="1"></canvas>
+        <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg" width="1" height="1" viewBox="0 0 1 1"></svg>
+      </div>
+    </div>
+
+    <div class="empty-state" id="empty-state">
+      <div class="empty-mark">
+        <svg viewBox="0 0 32 32"><use href="#i-logo"></use></svg>
+      </div>
+      <span class="empty-kicker">SUPERPHOTO · PHOTO STUDIO</span>
+      <h1>La retouche photo, sans compromis.</h1>
+      <p>
+        Ouvrez une image ou créez une toile pour commencer. Calques, sélections,
+        courbes, niveaux et tracés Bézier vous attendent dans un espace sombre,
+        précis et rapide.
+      </p>
+      <div class="empty-actions">
+        <button class="btn primary lg" id="empty-new">
+          <svg viewBox="0 0 24 24"><use href="#i-new"></use></svg>
+          Nouveau document
+        </button>
+        <button class="btn ghost lg" id="empty-open">
+          <svg viewBox="0 0 24 24"><use href="#i-open"></use></svg>
+          Ouvrir depuis l'ordinateur
+        </button>
+      </div>
+      <div class="empty-features">
+        <span>Astro</span><i></i><span>Rust / Tauri</span><i></i><span>Windows · macOS · Linux</span>
+      </div>
+    </div>
+  </div>
+</section>

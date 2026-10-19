@@ -1,0 +1,57 @@
+<aside class="sidebar layers-sidebar" id="layers-sidebar" aria-label="Calques">
+  <div class="sidebar-head">
+    <div>
+      <span class="eyebrow">Document</span>
+      <h2>Calques</h2>
+    </div>
+    <button class="icon-btn accent" id="layer-add" title="Nouveau calque" aria-label="Nouveau calque" disabled>
+      <svg viewBox="0 0 24 24"><use href="#i-plus"></use></svg>
+    </button>
+  </div>
+
+  <div class="layers-list" id="layers-list" aria-live="polite">
+    <div class="empty-hint">Aucun document ouvert.</div>
+  </div>
+
+  <div class="layer-actions" role="group" aria-label="Actions sur les calques">
+    <button class="layer-action" id="layer-duplicate" title="Dupliquer le calque" disabled>
+      <svg viewBox="0 0 24 24"><use href="#i-duplicate"></use></svg>
+      <span>Dupliquer</span>
+    </button>
+    <button class="layer-action danger" id="layer-delete" title="Supprimer le calque" disabled>
+      <svg viewBox="0 0 24 24"><use href="#i-trash"></use></svg>
+      <span>Supprimer</span>
+    </button>
+    <div class="layer-order">
+      <button class="icon-btn" id="layer-up" title="Monter le calque" aria-label="Monter le calque" disabled>
+        <svg viewBox="0 0 24 24"><use href="#i-up"></use></svg>
+      </button>
+      <button class="icon-btn" id="layer-down" title="Descendre le calque" aria-label="Descendre le calque" disabled>
+        <svg viewBox="0 0 24 24"><use href="#i-down"></use></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="panel-section">
+    <div class="section-title">Propriétés</div>
+    <label class="field-label" for="layer-name">Nom du calque</label>
+    <input type="text" id="layer-name" class="text-input" placeholder="Calque" disabled />
+
+    <div class="range-field compact">
+      <span>Opacité</span>
+      <output id="layer-opacity-value">100 %</output>
+      <input type="range" id="layer-opacity" min="0" max="100" step="1" value="100" disabled />
+    </div>
+
+    <label class="field-label" for="layer-blend">Mode de fusion</label>
+    <select id="layer-blend" class="select-input" disabled></select>
+  </div>
+
+  <div class="document-card">
+    <div class="section-title">Informations</div>
+    <div class="doc-row"><span>Taille</span><strong id="doc-size">—</strong></div>
+    <div class="doc-row"><span>Résolution</span><strong id="doc-dpi">—</strong></div>
+    <div class="doc-row"><span>Calques</span><strong id="doc-layers">—</strong></div>
+    <div class="doc-note">SuperPhoto · RVB 8 bits · sRGB</div>
+  </div>
+</aside>

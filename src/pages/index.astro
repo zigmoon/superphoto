@@ -1,0 +1,37 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import IconSprite from '../components/IconSprite.astro';
+import TopBar from '../components/TopBar.astro';
+import LayersPanel from '../components/LayersPanel.astro';
+import Stage from '../components/Stage.astro';
+import ToolRail from '../components/ToolRail.astro';
+import StatusBar from '../components/StatusBar.astro';
+import NewDocumentDialog from '../components/NewDocumentDialog.astro';
+import ResizeDialog from '../components/ResizeDialog.astro';
+import ExportDialog from '../components/ExportDialog.astro';
+import PreferencesDialog from '../components/PreferencesDialog.astro';
+---
+
+<BaseLayout>
+  <IconSprite />
+  <div class="app-shell" id="app-shell">
+    <TopBar />
+    <main class="workspace">
+      <LayersPanel />
+      <Stage />
+      <ToolRail />
+    </main>
+    <StatusBar />
+  </div>
+
+  <NewDocumentDialog />
+  <ResizeDialog />
+  <ExportDialog />
+  <PreferencesDialog />
+  <div class="toast-host" id="toast-host" aria-live="polite"></div>
+
+  <script>
+    import { startSuperPhoto } from '../lib/editor';
+    startSuperPhoto();
+  </script>
+</BaseLayout>

@@ -1,0 +1,59 @@
+---
+import '../styles/app.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'SuperPhoto — Studio de retouche photographique',
+  description = 'SuperPhoto, le studio de retouche photographique : thème clair ou sombre, calques, courbes, niveaux et export rapide. Astro + Rust, Windows, macOS et Linux.',
+} = Astro.props;
+---
+<!doctype html>
+<html
+  lang="fr"
+  class="theme-light"
+  data-theme="light"
+  data-theme-mode="light"
+  data-accent="orange"
+  data-checker="auto"
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#f8f8f8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+    <script is:inline>
+      // Applique le thème avant le premier rendu : aucun flash clair → sombre.
+      (() => {
+        const root = document.documentElement;
+        const fallback = { theme: 'light', accent: 'orange', checker: 'auto', motion: 'full' };
+        let prefs = fallback;
+        try {
+          const raw = localStorage.getItem('superphoto:prefs:v1');
+          if (raw) prefs = Object.assign({}, fallback, JSON.parse(raw));
+        } catch (_) {}
+        const systemDark =
+          typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
+        const dark = prefs.theme === 'dark' || (prefs.theme === 'system' && systemDark);
+        root.classList.toggle('theme-dark', dark);
+        root.classList.toggle('theme-light', !dark);
+        root.classList.toggle('reduce-motion', prefs.motion === 'reduced');
+        root.dataset.theme = dark ? 'dark' : 'light';
+        root.dataset.themeMode = prefs.theme;
+        root.dataset.accent = prefs.accent;
+        root.dataset.checker = prefs.checker;
+        root.style.colorScheme = dark ? 'dark' : 'light';
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#121214' : '#f8f8f8');
+      })();
+    </script>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

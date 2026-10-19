@@ -1,0 +1,80 @@
+name: Build SuperPhoto
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows (x64)
+            platform: windows-latest
+            bundles: nsis
+            args: ''
+            artifact: superphoto-windows-x64
+            bundle: src-tauri/target/release/bundle
+          - name: Linux (x64)
+            platform: ubuntu-22.04
+            bundles: deb,appimage
+            args: ''
+            artifact: superphoto-linux-x64
+            bundle: src-tauri/target/release/bundle
+          - name: macOS (universal)
+            platform: macos-latest
+            bundles: dmg
+            args: '--target universal-apple-darwin'
+            artifact: superphoto-macos-universal
+            bundle: src-tauri/target/universal-apple-darwin/release/bundle
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build desktop bundle
+        run: npx tauri build --bundles ${{ matrix.bundles }} ${{ matrix.args }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bundle }}
+          if-no-files-found: error
