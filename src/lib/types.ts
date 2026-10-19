@@ -1,10 +1,17 @@
 export type ToolId =
   | 'select'
   | 'marquee'
+  | 'magic-wand'
   | 'crop'
   | 'shapes'
   | 'pen'
   | 'text'
+  | 'pencil'
+  | 'brush'
+  | 'eraser'
+  | 'stamp'
+  | 'patch'
+  | 'heal'
   | 'eyedropper'
   | 'gradient'
   | 'zoom'
@@ -83,6 +90,12 @@ export interface Layer {
   opacity: number;
   blend: BlendMode;
   canvas: HTMLCanvasElement;
+  /** Masque de fusion : l'alpha du canvas sert de visibilité (blanc = visible). */
+  mask?: HTMLCanvasElement;
+  /** Masque actif (désactivable sans le supprimer). */
+  maskEnabled?: boolean;
+  /** Le calque travaille sur son masque : les outils peignent dedans. */
+  maskEditing?: boolean;
   text?: TextData;
   path?: PathData;
 }
@@ -100,7 +113,13 @@ export interface PhotoDoc {
 export type Selection =
   | { type: 'rect'; rect: Rect; invert: boolean }
   | { type: 'ellipse'; rect: Rect; invert: boolean }
-  | { type: 'poly'; points: Point[]; invert: boolean };
+  | {
+      type: 'poly';
+      points: Point[];
+      /** Contours supplémentaires (trous) : remplissage pair-impair. */
+      rings?: Point[][];
+      invert: boolean;
+    };
 
 export interface HistoryEntry {
   label: string;
@@ -130,6 +149,31 @@ export interface CurvePoint {
 }
 
 export type CurveChannel = 'rgb' | 'r' | 'g' | 'b';
+
+export interface BrushSettings {
+  /** Diamètre en pixels du document. */
+  size: number;
+  /** 0 = bord très doux, 1 = bord net. */
+  hardness: number;
+  /** Opacité du flux, 0 → 1. */
+  opacity: number;
+  /** Espacement des tampons, en fraction du diamètre. */
+  spacing: number;
+}
+
+export interface WandSettings {
+  /** Tolérance colorimétrique, 0 → 255. */
+  tolerance: number;
+  /** Faux = sélection globale (toutes les zones de la même couleur). */
+  contiguous: boolean;
+  /** Échantillonne l'image composée plutôt que le calque actif. */
+  merged: boolean;
+}
+
+export interface PatchSettings {
+  /** Correcteur : harmonise la couleur copiée avec la zone d'accueil. */
+  corrector: boolean;
+}
 
 export interface AdjustmentState {
   id: AdjustmentId;

@@ -13,6 +13,8 @@ export interface Preferences {
   coordinates: boolean;
   smoothZoom: boolean;
   autoFit: boolean;
+  /** Enregistre le document dans le navigateur après chaque modification. */
+  autosave: boolean;
 }
 
 export const PREFERENCES_KEY = 'superphoto:prefs:v1';
@@ -31,6 +33,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   coordinates: true,
   smoothZoom: true,
   autoFit: true,
+  autosave: true,
 };
 
 const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
@@ -60,6 +63,7 @@ export function normalizePreferences(raw: unknown): Preferences {
     coordinates: pickBoolean(source.coordinates, DEFAULT_PREFERENCES.coordinates),
     smoothZoom: pickBoolean(source.smoothZoom, DEFAULT_PREFERENCES.smoothZoom),
     autoFit: pickBoolean(source.autoFit, DEFAULT_PREFERENCES.autoFit),
+    autosave: pickBoolean(source.autosave, DEFAULT_PREFERENCES.autosave),
   };
 }
 
@@ -123,7 +127,8 @@ export function preferencesEqual(a: Preferences, b: Preferences): boolean {
     a.quality === b.quality &&
     a.coordinates === b.coordinates &&
     a.smoothZoom === b.smoothZoom &&
-    a.autoFit === b.autoFit
+    a.autoFit === b.autoFit &&
+    a.autosave === b.autosave
   );
 }
 

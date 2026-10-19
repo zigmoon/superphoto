@@ -107,6 +107,24 @@
             <input type="checkbox" data-pref-toggle="autoFit" />
           </label>
         </div>
+
+        <div class="prefs-section">
+          <div class="prefs-section-title">Session</div>
+          <div class="prefs-section-hint">
+            Le document (calques et masques) est enregistré dans le navigateur après chaque
+            modification : fermer l’onglet ne perd plus le travail.
+          </div>
+          <label class="prefs-switch">
+            <span>
+              <strong>Sauvegarde automatique</strong>
+              <small id="prefs-session-state">Dernière sauvegarde : —</small>
+            </span>
+            <input type="checkbox" data-pref-toggle="autosave" />
+          </label>
+          <div class="button-row">
+            <button class="btn ghost sm" id="prefs-forget-session">Oublier la session enregistrée</button>
+          </div>
+        </div>
       </section>
 
       <section class="prefs-panel" data-prefs-panel="shortcuts" hidden>
@@ -115,10 +133,17 @@
           <div class="shortcut-grid">
             <span><kbd>V</kbd> Sélection</span>
             <span><kbd>M</kbd> Zone de sélection</span>
+            <span><kbd>W</kbd> Baguette magique</span>
             <span><kbd>C</kbd> Recadrage</span>
             <span><kbd>U</kbd> Objets</span>
             <span><kbd>P</kbd> Plume</span>
             <span><kbd>T</kbd> Texte</span>
+            <span><kbd>N</kbd> Crayon</span>
+            <span><kbd>B</kbd> Pinceau</span>
+            <span><kbd>E</kbd> Gomme</span>
+            <span><kbd>S</kbd> Tampon</span>
+            <span><kbd>J</kbd> Pièce</span>
+            <span><kbd>K</kbd> Correcteur</span>
             <span><kbd>I</kbd> Pipette</span>
             <span><kbd>G</kbd> Dégradé</span>
             <span><kbd>Z</kbd> Zoom</span>

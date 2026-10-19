@@ -14,6 +14,10 @@
   </div>
 
   <div class="layer-actions" role="group" aria-label="Actions sur les calques">
+    <button class="layer-action" id="layer-mask" title="Ajouter un masque de fusion" disabled>
+      <svg viewBox="0 0 24 24"><use href="#i-mask"></use></svg>
+      <span>Masque</span>
+    </button>
     <button class="layer-action" id="layer-duplicate" title="Dupliquer le calque" disabled>
       <svg viewBox="0 0 24 24"><use href="#i-duplicate"></use></svg>
       <span>Dupliquer</span>
@@ -30,6 +34,22 @@
         <svg viewBox="0 0 24 24"><use href="#i-down"></use></svg>
       </button>
     </div>
+  </div>
+
+  <div class="mask-controls" id="mask-controls" hidden>
+    <div class="mask-head">
+      <span class="section-title">Masque de fusion</span>
+      <label class="switch-field">
+        <input type="checkbox" id="layer-mask-enabled" checked />
+        <span>Actif</span>
+      </label>
+    </div>
+    <div class="button-row">
+      <button class="btn ghost sm" id="layer-mask-edit">Peindre le masque</button>
+      <button class="btn ghost sm" id="layer-mask-apply">Appliquer</button>
+      <button class="btn ghost sm" id="layer-mask-delete">Supprimer</button>
+    </div>
+    <p class="mask-hint">Peignez en clair pour révéler, en sombre pour masquer.</p>
   </div>
 
   <div class="panel-section">

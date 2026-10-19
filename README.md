@@ -25,7 +25,8 @@ Le bouton **Ouvrir depuis l’ordinateur** utilise les dialogues natifs Tauri en
 
 - Liste ordonnée (du calque supérieur au calque inférieur) avec vignette, nom et type.
 - Afficher/masquer, sélectionner, renommer.
-- **Dupliquer** et **Supprimer**.
+- **Masque de fusion** (bouton *Masque*) : vignette à côté du calque, activable/désactivable, appliquable aux pixels ou supprimable. Cliquer la vignette du masque met les outils en mode masque (clair = révéler, sombre = masquer).
+- **Dupliquer** et **Supprimer** (le masque est dupliqué avec le calque).
 - Monter / descendre dans la pile.
 - Opacité (0–100 %) et modes de fusion (Produit, Écran, Incrustation, Lumière crue, etc.).
 - Ajout de calque vide.
@@ -36,15 +37,22 @@ Le bouton **Ouvrir depuis l’ordinateur** utilise les dialogues natifs Tauri en
 | --- | --- |
 | **Sélection** (V) | Choisir un calque au clic, déplacer son contenu au glisser. |
 | **Zone de sélection** (M) | Rectangle, ellipse ou lasso ; tout sélectionner, désélectionner, inverser. Les réglages et les tracés respectent la sélection. |
+| **Baguette magique** (W) | Sélection par couleur proche, tolérance réglable, zones contiguës ou globales, échantillonnage du calque ou de l’image composée. Le contour devient une sélection polygonale (trous compris) : détourage, inversion et réglages fonctionnent dessus. |
 | **Recadrage** (C) | Cadre libre ou ratios 1:1, 4:3, 16:9, 3:2, 4:5 ; validation par Entrée ou bouton Appliquer. |
 | **Objets** (U) | Rectangle, ellipse, triangle, étoile et ligne, avec remplissage, contour, épaisseur et rayon. |
 | **Plume** (P) | Tracé Bézier : clic = point, glisser = courbes, clic sur le premier point = fermer. Points et poignées restent éditables. |
 | **Texte** (T) | Bloc de texte éditable (contenu, police, taille, graisse, couleur, alignement). |
+| **Crayon** (N) | Trait net sans lissage, épaisseur et opacité réglables. Alt = gomme. |
+| **Pinceau** (B) | Tampons doux : taille (1–600 px), dureté, opacité, espacement, préréglages 8/24/56/120/280. Alt = gomme. |
+| **Gomme** (E) | Efface les pixels du calque (ou masque, si vous peignez le masque). |
+| **Tampon** (S) | Clonage : Alt+clic définit la source, puis on peint. Option **Correcteur** pour harmoniser la couleur copiée avec la zone d’accueil. Échantillonne l’image composée. |
+| **Pièce** (J) | Tracez la zone à réparer, puis glissez-la sur une zone propre : le contenu propre remplace la zone. Avec ou sans **Correcteur** (harmonisation colorimétrique). |
+| **Correcteur** (K) | Peinture de retouche : la source est choisie automatiquement parmi quatre zones voisines (rejet de la valeur aberrante) et sa couleur est harmonisée. |
 | **Pipette** (I) | Prélèvement de couleur dans l’image composite (Alt = couleur secondaire). |
 | **Dégradé** (G) | Linéaire ou radial, couleur → transparent, couleur → secondaire, secondaire → transparent. |
 | **Zoom** (Z) | Zoom avant/arrière, ajustement, 100 %, 200 %, 400 %, molette avec Ctrl/⌘. |
 | **Main** (H) | Déplacement de la vue ; barre d’espace temporaire. |
-| **Taille de l’image** | Rééchantillonnage haute qualité de tous les calques, résolution modifiable. |
+| **Taille de l’image** | Rééchantillonnage haute qualité de tous les calques (masques compris), résolution modifiable. |
 | **Taille de la zone de travail** | Extension/rogne avec point d’ancrage 3×3, sans changer l’échelle des pixels. |
 | **Tonalité** | Exposition (EV), luminosité, noirs. |
 | **Contraste** | Contraste global. |
@@ -53,6 +61,15 @@ Le bouton **Ouvrir depuis l’ordinateur** utilise les dialogues natifs Tauri en
 | **Courbes** | Éditeur interactif RVB / R / G / B : clic pour ajouter un point, glisser pour ajuster, double-clic pour supprimer. |
 
 Les cinq réglages disposent d’un **aperçu direct**, d’**Appliquer**, **Annuler** et **Réinitialiser**. Ils s’appliquent au calque actif et respectent la sélection ; appliquer un réglage à un calque Texte ou Tracé le rasterise.
+
+### Sauvegarde automatique
+
+Le document (calques **et** masques) est enregistré dans **IndexedDB** après chaque modification — fermer l’onglet ne perd plus le travail.
+
+- Badge dans la barre d’état : `Auto`, `Enregistrement…`, `Enregistré 10:42`, `Auto off`, `Auto indisponible`.
+- Au démarrage, la session précédente est **restaurée automatiquement** ; sinon la fenêtre « Nouveau document » s’ouvre.
+- Les calques sont stockés en PNG (`toBlob`), sans base64 : pas de limite de 5 Mo et pas de blocage de l’interface.
+- Désactivable dans **Préférences → Toile → Session**, avec un bouton **Oublier la session enregistrée**.
 
 ### Barre supérieure et barre d’état
 
@@ -70,7 +87,7 @@ Les préférences s’ouvrent avec le bouton **⚙** de la barre supérieure ou 
 | Onglet | Réglages |
 | --- | --- |
 | **Apparence** | Thème **Clair / Sombre / Système**, couleur d’accent (Orange, Encre, Bleu, Vert, Rose), animations normales ou réduites. |
-| **Toile** | Damier de transparence (auto/clair/sombre), qualité de rendu (rapide/équilibrée/précise), coordonnées du curseur, lissage du zoom, ajustement automatique au redimensionnement. |
+| **Toile** | Damier de transparence (auto/clair/sombre), qualité de rendu (rapide/équilibrée/précise), coordonnées du curseur, lissage du zoom, ajustement automatique au redimensionnement. **Session** : sauvegarde automatique et bouton pour oublier la session enregistrée. |
 | **Raccourcis** | Toutes les combinaisons clavier, classées par outil, fichier et vue. |
 | **À propos** | Version, technologies, crédits, licence. |
 
@@ -80,7 +97,9 @@ Les préférences s’ouvrent avec le bouton **⚙** de la barre supérieure ou 
 
 | Raccourci | Action |
 | --- | --- |
-| `V` `M` `C` `U` `P` `T` `I` `G` `Z` `H` | Outils |
+| `V` `M` `W` `C` `U` `P` `T` `N` `B` `E` `S` `J` `K` `I` `G` `Z` `H` | Outils (Sélection, Zone, Baguette, Recadrage, Objets, Plume, Texte, Crayon, Pinceau, Gomme, Tampon, Pièce, Correcteur, Pipette, Dégradé, Zoom, Main) |
+| `[` / `]` | Taille du pinceau (ou du crayon) |
+| `Alt + clic` | Source du tampon · gomme temporaire · couleur secondaire (pipette) |
 | `Ctrl/⌘ + Z` | Annuler |
 | `Ctrl/⌘ + Shift + Z` ou `Ctrl/⌘ + Y` | Rétablir |
 | `Ctrl/⌘ + N` | Nouveau document |
@@ -212,8 +231,12 @@ Il s’exécute manuellement (`workflow_dispatch`) ou sur un tag `v*`. Les insta
 ## 4. Notes d’implémentation
 
 - **Calques** : chaque calque possède un canvas de la taille du document. La composition applique opacité et mode de fusion. Les calques Texte et Tracé conservent leurs métadonnées éditables ; les autres outils les rasterisent si nécessaire.
-- **Sélection** : masque rectangulaire, elliptique ou polygonale (lasso), avec inversion. Les réglages pixel par pixel et les dessins utilisent ce masque.
-- **Historique** : commandes avec fermetures undo/redo, limitées à 24 entrées. Les snapshots de géométrie (recadrage, resize) conservent les anciens canvases.
+- **Masques** : le masque est un canvas dont l’**alpha** porte la visibilité. Peindre en clair compose en `source-over`, peindre en sombre efface en `destination-out` — aucune boucle par pixel. La composition passe par un canvas de travail (`destination-in`), si bien que l’opacité et le mode de fusion du calque restent intacts.
+- **Baguette magique** : diffusion 4-connexe sur un `Uint8Array`, puis extraction des contours (segments de frontière), simplification Douglas-Peucker et conversion en sélection polygonale multi-anneaux (remplissage pair-impair). Tous les outils existants fonctionnent dessus sans code parallèle.
+- **Moteur de peinture** : tampons calculés dans un canvas de la taille du pinceau (jamais du document), espacement constant quelle que soit la fréquence de la souris, tampon obligatoire au premier contact (`force`) pour qu’un simple clic marque. Tampon et correcteur échantillonnent l’image composée ; le correcteur choisit sa source parmi quatre voisines par consensus (rejet de la valeur aberrante) et harmonise la couleur.
+- **Sélection** : masque rectangulaire, elliptique ou polygonale (lasso ou baguette), avec inversion. Les réglages pixel par pixel et les dessins utilisent ce masque.
+- **Historique** : commandes avec fermetures undo/redo, limitées à 24 entrées. Les snapshots de géométrie (recadrage, resize) conservent les anciens canvases et les masques.
+- **Sauvegarde automatique** : IndexedDB (`superphoto` / `sessions` / `current`), un PNG par calque et par masque via `toBlob`, écriture différée de 1,5 s et vidage forcée quand l’onglet passe en arrière-plan.
 - **Rééchantillonnage** : `drawImage` avec un `imageSmoothingQuality` piloté par la préférence de rendu (rapide / équilibrée / précise) ; le backend Rust pourra accueillir un pipeline Lanczos/ICC lors d’une prochaine itération.
 - **Export** : composition des calques visibles, aplatissement sur blanc pour JPEG, encodage par le navigateur, écriture native via Rust.
 - **Thèmes** : chaque couleur est un jeton CSS (`--bg-surface`, `--text`, `--accent`…). Changer de thème ou d’accent ne re-rend **jamais** le canvas ; l’état du document est indépendant de l’habillage.

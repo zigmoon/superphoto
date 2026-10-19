@@ -1,3 +1,4 @@
+import { cloneMask, drawMaskedLayer } from './mask';
 import type {
   Layer,
   LayerKind,
@@ -220,7 +221,7 @@ export function renderDocument(
     ctx.save();
     ctx.globalAlpha = layer.opacity;
     ctx.globalCompositeOperation = layer.blend;
-    ctx.drawImage(layer.canvas, 0, 0);
+    drawMaskedLayer(ctx, layer, 0, 0);
     ctx.restore();
   }
 }
@@ -234,6 +235,7 @@ export function compositeCanvas(doc: PhotoDoc, background?: string | null): HTML
 export interface LayerGeometryState {
   layer: Layer;
   canvas: HTMLCanvasElement;
+  mask?: HTMLCanvasElement;
   text?: TextData;
   path?: PathData;
 }
@@ -253,6 +255,7 @@ export function snapshotGeometry(doc: PhotoDoc): DocGeometrySnapshot {
     states: doc.layers.map((layer) => ({
       layer,
       canvas: layer.canvas,
+      mask: layer.mask,
       text: layer.text ? deepClone(layer.text) : undefined,
       path: layer.path ? deepClone(layer.path) : undefined,
     })),
@@ -265,6 +268,7 @@ export function restoreGeometry(doc: PhotoDoc, snapshot: DocGeometrySnapshot): v
   doc.dpi = snapshot.dpi;
   for (const state of snapshot.states) {
     state.layer.canvas = state.canvas;
+    state.layer.mask = state.mask;
     state.layer.text = state.text ? deepClone(state.text) : undefined;
     state.layer.path = state.path ? deepClone(state.path) : undefined;
   }
@@ -287,6 +291,14 @@ export function resizeDocumentImage(
     ctx.imageSmoothingQuality = quality;
     ctx.drawImage(layer.canvas, 0, 0, newWidth, newHeight);
     layer.canvas = next;
+    if (layer.mask) {
+      const mask = createCanvas(newWidth, newHeight);
+      const maskCtx = canvasContext(mask);
+      maskCtx.imageSmoothingEnabled = true;
+      maskCtx.imageSmoothingQuality = quality;
+      maskCtx.drawImage(layer.mask, 0, 0, newWidth, newHeight);
+      layer.mask = mask;
+    }
     if (layer.text) {
       layer.text.x *= sx;
       layer.text.y *= sy;
@@ -325,6 +337,12 @@ export function resizeDocumentCanvas(
     const ctx = canvasContext(next);
     ctx.drawImage(layer.canvas, offsetX, offsetY);
     layer.canvas = next;
+    if (layer.mask) {
+      const mask = createCanvas(newWidth, newHeight);
+      const maskCtx = canvasContext(mask);
+      maskCtx.drawImage(layer.mask, offsetX, offsetY);
+      layer.mask = mask;
+    }
     if (layer.text) {
       layer.text.x += offsetX;
       layer.text.y += offsetY;
@@ -352,6 +370,12 @@ export function cropDocument(doc: PhotoDoc, rect: Rect): DocGeometrySnapshot {
     const ctx = canvasContext(next);
     ctx.drawImage(layer.canvas, -x, -y);
     layer.canvas = next;
+    if (layer.mask) {
+      const mask = createCanvas(width, height);
+      const maskCtx = canvasContext(mask);
+      maskCtx.drawImage(layer.mask, -x, -y);
+      layer.mask = mask;
+    }
     if (layer.text) {
       layer.text.x -= x;
       layer.text.y -= y;
@@ -380,6 +404,7 @@ export function duplicateLayer(layer: Layer): Layer {
       ctx.drawImage(layer.canvas, 0, 0);
       return copy;
     })(),
+    mask: layer.mask ? cloneMask(layer.mask) : undefined,
     text: layer.text ? deepClone(layer.text) : undefined,
     path: layer.path ? deepClone(layer.path) : undefined,
   };

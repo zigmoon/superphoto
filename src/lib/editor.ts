@@ -30,6 +30,17 @@ import {
   sanitizeFilename,
   saveExport,
 } from './io';
+import { createMask, drawMaskThumb, flattenMask } from './mask';
+import {
+  brushColorForMask,
+  cloneStamp,
+  meanColorAround,
+  colorShift,
+  paintStamp,
+  patchRegion,
+  strokePencil,
+  walkStroke,
+} from './painting';
 import {
   DEFAULT_PREFERENCES,
   applyPreferences,
@@ -43,14 +54,24 @@ import {
   type RenderQuality,
   type ThemeMode,
 } from './preferences';
+import { magicWandSelection } from './selection';
+import {
+  clearSession,
+  formatSessionTime,
+  loadSession,
+  restoreDocument,
+  saveSession,
+} from './session';
 import type {
   AdjustmentId,
   AdjustmentState,
   BlendMode,
+  BrushSettings,
   CurveChannel,
   CurvePoint,
   GradientOptions,
   Layer,
+  PatchSettings,
   PathData,
   PhotoDoc,
   Point,
@@ -59,6 +80,7 @@ import type {
   ShapeOptions,
   TextData,
   ToolId,
+  WandSettings,
 } from './types';
 import {
   canvasContext,
@@ -69,6 +91,8 @@ import {
   deepClone,
   normalizeRect,
   rgbToHex,
+  selectionBounds,
+  selectionRings,
   withAlpha,
 } from './utils';
 
@@ -78,6 +102,21 @@ type DragState =
   | { kind: 'crop'; start: Point; current: Point; ratio: number | null }
   | { kind: 'shape'; start: Point; current: Point }
   | { kind: 'gradient'; start: Point; current: Point }
+  | {
+      kind: 'paint';
+      layerId: string;
+      target: 'layer' | 'mask';
+      last: Point;
+      carry: number;
+      before: HTMLCanvasElement;
+      source: HTMLCanvasElement | null;
+      offset: Point | null;
+      label: string;
+      erase: boolean;
+      shift: { r: number; g: number; b: number } | null;
+    }
+  | { kind: 'patch-region'; start: Point; current: Point }
+  | { kind: 'patch-move'; start: Point; current: Point }
   | {
       kind: 'move';
       layerId: string;
@@ -118,6 +157,48 @@ const TOOLS: Record<ToolId, ToolInfo> = {
     shortcut: 'M',
     cursor: 'crosshair',
     hint: 'Tracez une zone pour limiter les réglages et les tracés.',
+  },
+  'magic-wand': {
+    label: 'Baguette magique',
+    shortcut: 'W',
+    cursor: 'crosshair',
+    hint: 'Cliquez pour sélectionner les pixels de couleur proche. Maj ajoute à la sélection.',
+  },
+  pencil: {
+    label: 'Crayon',
+    shortcut: 'N',
+    cursor: 'crosshair',
+    hint: 'Trace net, sans lissage. Alt active la gomme.',
+  },
+  brush: {
+    label: 'Pinceau',
+    shortcut: 'B',
+    cursor: 'crosshair',
+    hint: 'Peignez avec le pinceau. Alt active la gomme.',
+  },
+  eraser: {
+    label: 'Gomme',
+    shortcut: 'E',
+    cursor: 'crosshair',
+    hint: 'Efface les pixels du calque (ou révèle le masque si vous peignez dessus).',
+  },
+  stamp: {
+    label: 'Tampon',
+    shortcut: 'S',
+    cursor: 'crosshair',
+    hint: 'Alt+clic définit la source, puis peignez pour cloner.',
+  },
+  patch: {
+    label: 'Pièce',
+    shortcut: 'J',
+    cursor: 'crosshair',
+    hint: 'Tracez la zone à réparer, puis glissez-la sur une zone propre.',
+  },
+  heal: {
+    label: 'Correcteur',
+    shortcut: 'K',
+    cursor: 'crosshair',
+    hint: 'Peignez sur une petite tache : le voisinage est ramené dessus.',
   },
   crop: {
     label: 'Recadrage',
@@ -324,6 +405,16 @@ export class SuperPhotoEditor {
 
   private cropRatio: number | null = null;
   private marqueeMode: 'rect' | 'ellipse' | 'lasso' = 'rect';
+  private brush: BrushSettings = { size: 56, hardness: 0.75, opacity: 1, spacing: 0.12 };
+  private pencilOptions = { size: 3, opacity: 1 };
+  private wand: WandSettings = { tolerance: 32, contiguous: true, merged: false };
+  private patchOptions: PatchSettings = { corrector: true };
+  private stampSource: Point | null = null;
+  private patchSourceRect: Rect | null = null;
+  private autosaveTimer = 0;
+  private autosaveState: 'off' | 'idle' | 'saving' | 'saved' | 'error' = 'idle';
+  private autosaveAt = 0;
+  private lastSessionAt = 0;
   private curveChannel: CurveChannel = 'rgb';
   private textEditBefore = new Map<string, TextData>();
   private layerPropBefore: number | null = null;
@@ -387,7 +478,27 @@ export class SuperPhotoEditor {
     this.syncColors();
     this.setTool('select');
     this.renderAll();
-    window.setTimeout(() => this.openNewDocumentDialog(true), 120);
+    this.bindSession();
+    void this.boot();
+  }
+
+  /**
+   * Au démarrage : on restaure la session si elle existe, sinon on propose la
+   * fenêtre « Nouveau document ». Rien n'est perdu en fermant l'onglet.
+   */
+  private async boot(): Promise<void> {
+    const restored = await this.restoreSession();
+    if (restored) {
+      // La fenêtre d'ouverture est présente dans le HTML : sans cela elle
+      // resterait par-dessus un document restauré.
+      this.closeNewDocumentDialog();
+      return;
+    }
+    window.setTimeout(() => {
+      // Un document a pu être créé entre-temps (Ctrl+N, glisser-déposer) :
+      // on n'écrase pas son travail avec la fenêtre d'ouverture.
+      if (!this.doc) this.openNewDocumentDialog(true);
+    }, 120);
   }
 
   private node<T extends HTMLElement>(id: string): T {
@@ -461,6 +572,8 @@ export class SuperPhotoEditor {
     this.doc = doc;
     this.selection = null;
     this.pendingCrop = null;
+    this.patchSourceRect = null;
+    this.stampSource = null;
     this.drag = null;
     this.statusCache.clear();
     this.invalidateDisplayRect();
@@ -478,6 +591,107 @@ export class SuperPhotoEditor {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Session / sauvegarde automatique
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private bindSession(): void {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) void this.flushAutosave();
+    });
+    window.addEventListener('pagehide', () => {
+      void this.flushAutosave();
+    });
+  }
+
+  private scheduleAutosave(delay = 1500): void {
+    if (!this.preferences.autosave || !this.doc) return;
+    window.clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = window.setTimeout(() => {
+      this.autosaveTimer = 0;
+      void this.runAutosave();
+    }, delay);
+  }
+
+  private async flushAutosave(): Promise<void> {
+    if (!this.autosaveTimer) return;
+    window.clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = 0;
+    await this.runAutosave();
+  }
+
+  private async runAutosave(): Promise<void> {
+    const doc = this.doc;
+    if (!this.preferences.autosave || !doc || this.autosaveState === 'saving') return;
+    this.autosaveState = 'saving';
+    this.syncAutosaveBadge();
+    try {
+      await saveSession(doc);
+      this.autosaveState = 'saved';
+      this.autosaveAt = Date.now();
+      this.lastSessionAt = this.autosaveAt;
+    } catch (error) {
+      this.autosaveState = 'error';
+      console.warn('Sauvegarde automatique impossible', error);
+    }
+    this.syncAutosaveBadge();
+  }
+
+  private syncAutosaveBadge(): void {
+    const host = document.getElementById('status-autosave');
+    const state = this.preferences.autosave ? this.autosaveState : 'off';
+    if (host) {
+      host.dataset.state = state;
+      const text = document.getElementById('status-autosave-text');
+      if (text) {
+        text.textContent =
+          state === 'off'
+            ? 'Auto off'
+            : state === 'saving'
+              ? 'Enregistrement…'
+              : state === 'error'
+                ? 'Auto indisponible'
+                : state === 'saved'
+                  ? `Enregistré ${formatSessionTime(this.autosaveAt)}`
+                  : 'Auto';
+      }
+      host.title =
+        state === 'off'
+          ? 'Sauvegarde automatique désactivée (Préférences)'
+          : state === 'saved'
+            ? 'Session enregistrée dans le navigateur'
+            : 'Sauvegarde automatique';
+    }
+    const sessionHint = document.getElementById('prefs-session-state');
+    if (sessionHint) {
+      sessionHint.textContent = this.lastSessionAt
+        ? `Dernière sauvegarde : ${formatSessionTime(this.lastSessionAt)}`
+        : 'Aucune session enregistrée pour l’instant.';
+    }
+  }
+
+  private async restoreSession(): Promise<boolean> {
+    try {
+      const snapshot = await loadSession();
+      if (!snapshot) {
+        this.syncAutosaveBadge();
+        return false;
+      }
+      const doc = await restoreDocument(snapshot);
+      this.lastSessionAt = snapshot.savedAt;
+      this.applyDocument(doc);
+      this.autosaveState = 'saved';
+      this.autosaveAt = snapshot.savedAt;
+      this.syncAutosaveBadge();
+      this.setMessage(`Session restaurée · ${formatSessionTime(snapshot.savedAt)}`);
+      this.toast(`Session restaurée · ${formatSessionTime(snapshot.savedAt)}`, 'success');
+      return true;
+    } catch {
+      this.syncAutosaveBadge();
+      return false;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Rendering
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -487,6 +701,7 @@ export class SuperPhotoEditor {
     this.renderOverlay();
     this.renderLayers();
     this.syncChrome();
+    this.scheduleAutosave();
   }
 
   private syncCanvasGeometry(): void {
@@ -533,6 +748,7 @@ export class SuperPhotoEditor {
       Boolean(this.selection) ||
       Boolean(this.drag) ||
       Boolean(this.pendingCrop) ||
+      Boolean(this.patchSourceRect) ||
       (this.activeTool === 'pen' && Boolean(activePath?.path?.anchors.length)) ||
       (this.activeTool === 'text' && Boolean(activeText?.text?.bounds));
     if (!hasOverlay && this.overlay.childElementCount === 0) return;
@@ -571,12 +787,43 @@ export class SuperPhotoEditor {
           'vector-effect': 'non-scaling-stroke',
         });
       } else {
-        add('polygon', {
-          points: selection.points.map((p) => `${p.x},${p.y}`).join(' '),
-          class: 'selection-outline',
-          'vector-effect': 'non-scaling-stroke',
-        });
+        const rings = selectionRings(selection);
+        if (rings.length > 1) {
+          add('path', {
+            d: rings
+              .map((ring) => `M ${ring.map((p) => `${p.x} ${p.y}`).join(' L ')} Z`)
+              .join(' '),
+            class: 'selection-outline',
+            'fill-rule': 'evenodd',
+            'vector-effect': 'non-scaling-stroke',
+          });
+        } else {
+          const ring = rings[0] ?? selection.points;
+          add('polygon', {
+            points: ring.map((p) => `${p.x},${p.y}`).join(' '),
+            class: 'selection-outline',
+            'vector-effect': 'non-scaling-stroke',
+          });
+        }
       }
+    }
+
+    const patchDrag = this.drag?.kind === 'patch-move' ? this.drag : null;
+    const patchRectRaw =
+      this.drag?.kind === 'patch-region'
+        ? normalizeRect(this.drag.start, this.drag.current)
+        : this.patchSourceRect;
+    if (patchRectRaw) {
+      const dx = patchDrag ? patchDrag.current.x - patchDrag.start.x : 0;
+      const dy = patchDrag ? patchDrag.current.y - patchDrag.start.y : 0;
+      add('rect', {
+        x: patchRectRaw.x + dx,
+        y: patchRectRaw.y + dy,
+        width: patchRectRaw.w,
+        height: patchRectRaw.h,
+        class: 'patch-outline',
+        'vector-effect': 'non-scaling-stroke',
+      });
     }
 
     const drag = this.drag;
@@ -896,7 +1143,7 @@ export class SuperPhotoEditor {
     this.node<HTMLButtonElement>('btn-open').disabled = false;
 
     const hasDoc = Boolean(doc);
-    for (const id of ['layer-add', 'layer-duplicate', 'layer-delete', 'layer-up', 'layer-down']) {
+    for (const id of ['layer-add', 'layer-duplicate', 'layer-delete', 'layer-up', 'layer-down', 'layer-mask']) {
       const button = document.getElementById(id) as HTMLButtonElement | null;
       if (button) button.disabled = !hasDoc;
     }
@@ -929,6 +1176,33 @@ export class SuperPhotoEditor {
     if (blend.value !== blendValue) blend.value = blendValue;
     this.node<HTMLButtonElement>('layer-delete').disabled =
       !layer || (this.doc?.layers.length ?? 0) <= 1;
+    this.syncMaskControls();
+  }
+
+  private syncMaskControls(): void {
+    const layer = this.activeLayer;
+    const controls = document.getElementById('mask-controls');
+    if (controls) controls.hidden = !layer?.mask;
+    const enabled = document.getElementById('layer-mask-enabled') as HTMLInputElement | null;
+    if (enabled) {
+      enabled.checked = layer?.maskEnabled !== false;
+      enabled.disabled = !layer?.mask;
+    }
+    const edit = document.getElementById('layer-mask-edit') as HTMLButtonElement | null;
+    if (edit) {
+      edit.disabled = !layer?.mask;
+      edit.textContent = layer?.maskEditing ? 'Revenir aux pixels' : 'Peindre le masque';
+    }
+    const add = document.getElementById('layer-mask') as HTMLButtonElement | null;
+    if (add) {
+      add.disabled = !layer;
+      add.title = layer?.mask ? 'Peindre le masque (ou cliquer sur sa vignette)' : 'Ajouter un masque de fusion';
+    }
+    const apply = document.getElementById('layer-mask-apply') as HTMLButtonElement | null;
+    if (apply) apply.disabled = !layer?.mask;
+    const remove = document.getElementById('layer-mask-delete') as HTMLButtonElement | null;
+    if (remove) remove.disabled = !layer?.mask;
+    this.display.classList.toggle('is-mask-editing', Boolean(layer?.mask && layer.maskEditing));
   }
 
   private createLayerRow(layer: Layer): HTMLElement {
@@ -943,6 +1217,15 @@ export class SuperPhotoEditor {
     thumb.className = 'layer-thumb';
     thumb.width = 48;
     thumb.height = 48;
+    const maskSlot = document.createElement('button');
+    maskSlot.className = 'layer-mask-slot';
+    maskSlot.dataset.layerAction = 'mask';
+    maskSlot.hidden = true;
+    const maskThumb = document.createElement('canvas');
+    maskThumb.className = 'layer-mask-thumb';
+    maskThumb.width = 48;
+    maskThumb.height = 48;
+    maskSlot.append(maskThumb);
     const meta = document.createElement('div');
     meta.className = 'layer-meta';
     const name = document.createElement('span');
@@ -950,7 +1233,7 @@ export class SuperPhotoEditor {
     const kind = document.createElement('span');
     kind.className = 'layer-kind';
     meta.append(name, kind);
-    row.append(eye, thumb, meta);
+    row.append(eye, thumb, maskSlot, meta);
     return row;
   }
 
@@ -1009,6 +1292,25 @@ export class SuperPhotoEditor {
       const kind = row.querySelector<HTMLElement>('.layer-kind');
       const kindText = `${KIND_LABELS[layer.kind]} · ${Math.round(layer.opacity * 100)} %`;
       if (kind && kind.textContent !== kindText) kind.textContent = kindText;
+
+      const slot = row.querySelector<HTMLElement>('.layer-mask-slot');
+      const maskThumb = row.querySelector<HTMLCanvasElement>('.layer-mask-thumb');
+      row.classList.toggle('is-mask', Boolean(layer.mask && layer.maskEditing));
+      if (slot && maskThumb) {
+        slot.hidden = !layer.mask;
+        if (layer.mask) {
+          drawMaskThumb(maskThumb, layer.mask);
+          slot.classList.toggle('is-editing', Boolean(layer.maskEditing));
+          slot.classList.toggle('is-disabled', layer.maskEnabled === false);
+          slot.title =
+            layer.maskEnabled === false
+              ? 'Masque désactivé — cliquer pour le réactiver'
+              : layer.maskEditing
+                ? 'Vous peignez le masque — cliquer pour revenir aux pixels'
+                : 'Cliquer pour peindre le masque';
+          slot.setAttribute('aria-label', slot.title);
+        }
+      }
     }
 
     const signature = ordered.map((layer) => layer.id).join('|');
@@ -1058,11 +1360,14 @@ export class SuperPhotoEditor {
     );
     this.setText('status-zoom', `${Math.round(this.zoom * 100)} %`);
     if (this.selection) {
+      const bounds = selectionBounds(this.selection);
+      const points =
+        this.selection.type === 'poly'
+          ? selectionRings(this.selection).reduce((total, ring) => total + ring.length, 0)
+          : 0;
       this.setText(
         'status-selection',
-        this.selection.type === 'poly'
-          ? `Sélection · ${this.selection.points.length} points`
-          : `Sélection · ${Math.round(this.selection.rect.w)} × ${Math.round(this.selection.rect.h)} px`,
+        `Sélection · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px${points ? ` · ${points} pts` : ''}`,
       );
     } else {
       this.setText('status-selection', 'Aucune sélection');
@@ -1152,6 +1457,9 @@ export class SuperPhotoEditor {
       case 'marquee':
         body.innerHTML = this.marqueeOptionsHtml();
         break;
+      case 'magic-wand':
+        body.innerHTML = this.wandOptionsHtml();
+        break;
       case 'crop':
         body.innerHTML = this.cropOptionsHtml();
         break;
@@ -1163,6 +1471,20 @@ export class SuperPhotoEditor {
         break;
       case 'text':
         body.innerHTML = this.textOptionsHtml();
+        break;
+      case 'pencil':
+      case 'brush':
+      case 'eraser':
+        body.innerHTML = this.paintOptionsHtml();
+        break;
+      case 'stamp':
+        body.innerHTML = this.stampOptionsHtml();
+        break;
+      case 'patch':
+        body.innerHTML = this.patchOptionsHtml();
+        break;
+      case 'heal':
+        body.innerHTML = this.healOptionsHtml();
         break;
       case 'eyedropper':
         body.innerHTML = this.eyedropperOptionsHtml();
@@ -1204,6 +1526,121 @@ export class SuperPhotoEditor {
         <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>Inverser</button>
       </div>
       <p class="options-hint">${this.selection ? 'Les réglages et tracés sont limités à la sélection.' : 'Aucune sélection : les outils agissent sur tout le calque.'}</p>`;
+  }
+
+  private wandOptionsHtml(): string {
+    const wand = this.wand;
+    return `
+      <label class="range-field">Tolérance <output data-wand-output="tolerance">${wand.tolerance}</output>
+        <input type="range" min="0" max="128" step="1" data-wand-field="tolerance" value="${wand.tolerance}">
+      </label>
+      <label class="check-field"><input type="checkbox" data-wand-field="contiguous" ${wand.contiguous ? 'checked' : ''}> Zones contiguës</label>
+      <label class="check-field"><input type="checkbox" data-wand-field="merged" ${wand.merged ? 'checked' : ''}> Échantillonner l’image composée</label>
+      <div class="button-row">
+        <button class="btn ghost sm" data-action="deselect" ${this.selection ? '' : 'disabled'}>Désélectionner</button>
+        <button class="btn ghost sm" data-action="invert-selection" ${this.selection ? '' : 'disabled'}>Inverser</button>
+      </div>
+      <p class="options-hint">${escapeHtml(TOOLS['magic-wand'].hint)}</p>`;
+  }
+
+  private paintTargetHtml(): string {
+    const layer = this.activeLayer;
+    if (!layer) return '';
+    return layer.mask && layer.maskEditing
+      ? `<div class="option-card"><span class="option-card-label">Cible</span><strong>Masque · ${escapeHtml(layer.name)}</strong><span class="option-card-sub">Clair révèle · sombre masque</span></div>`
+      : `<div class="option-card"><span class="option-card-label">Cible</span><strong>Pixels · ${escapeHtml(layer.name)}</strong><span class="option-card-sub">${KIND_LABELS[layer.kind]}</span></div>`;
+  }
+
+  private paintOptionsHtml(): string {
+    const brush = this.brush;
+    if (this.activeTool === 'pencil') {
+      return `
+        <label class="range-field">Épaisseur <output data-paint-output="pencilSize">${this.pencilOptions.size} px</output>
+          <input type="range" min="1" max="48" step="1" data-paint-field="pencilSize" value="${this.pencilOptions.size}">
+        </label>
+        <label class="range-field">Opacité <output data-paint-output="pencilOpacity">${this.pencilOptions.opacity} %</output>
+          <input type="range" min="1" max="100" step="1" data-paint-field="pencilOpacity" value="${this.pencilOptions.opacity}">
+        </label>
+        ${this.paintTargetHtml()}
+        <p class="options-hint">Trait net, sans lissage. Alt active la gomme, Maj trace une ligne droite.</p>`;
+    }
+    const erase = this.activeTool === 'eraser';
+    return `
+      <label class="range-field">Taille <output data-paint-output="size">${brush.size} px</output>
+        <input type="range" min="1" max="600" step="1" data-paint-field="size" value="${brush.size}">
+      </label>
+      <div class="segmented" data-brush-presets>
+        <button data-brush-size="8">8</button>
+        <button data-brush-size="24">24</button>
+        <button data-brush-size="56">56</button>
+        <button data-brush-size="120">120</button>
+        <button data-brush-size="280">280</button>
+      </div>
+      <label class="range-field">Dureté <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
+        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
+      </label>
+      <label class="range-field">Opacité <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
+        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
+      </label>
+      <label class="range-field">Espacement <output data-paint-output="spacing">${Math.round(brush.spacing * 100)} %</output>
+        <input type="range" min="2" max="80" step="1" data-paint-field="spacing" value="${Math.round(brush.spacing * 100)}">
+      </label>
+      ${this.paintTargetHtml()}
+      <p class="options-hint">${erase ? 'La gomme efface les pixels ; sur un masque, elle masque la zone.' : 'Alt active la gomme. [ et ] changent la taille du pinceau.'}</p>`;
+  }
+
+  private stampOptionsHtml(): string {
+    const brush = this.brush;
+    const source = this.stampSource;
+    return `
+      <label class="range-field">Taille <output data-paint-output="size">${brush.size} px</output>
+        <input type="range" min="1" max="600" step="1" data-paint-field="size" value="${brush.size}">
+      </label>
+      <label class="range-field">Dureté <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
+        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
+      </label>
+      <label class="range-field">Opacité <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
+        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
+      </label>
+      <label class="check-field"><input type="checkbox" data-patch-field="corrector" ${this.patchOptions.corrector ? 'checked' : ''}> Correcteur : harmoniser les couleurs</label>
+      <div class="option-card">
+        <span class="option-card-label">Source</span>
+        <strong>${source ? `x ${Math.round(source.x)} · y ${Math.round(source.y)}` : 'Non définie'}</strong>
+        <span class="option-card-sub">Alt+clic sur l’image pour la définir</span>
+      </div>
+      ${this.paintTargetHtml()}
+      <p class="options-hint">${escapeHtml(TOOLS.stamp.hint)}</p>`;
+  }
+
+  private patchOptionsHtml(): string {
+    const rect = this.patchSourceRect;
+    return `
+      <label class="check-field"><input type="checkbox" data-patch-field="corrector" ${this.patchOptions.corrector ? 'checked' : ''}> Correcteur : harmoniser les couleurs</label>
+      <div class="option-card">
+        <span class="option-card-label">Zone à réparer</span>
+        <strong>${rect ? `${Math.round(rect.w)} × ${Math.round(rect.h)} px` : 'Aucune'}</strong>
+        <span class="option-card-sub">${rect ? 'Glissez la zone sur une zone propre' : 'Tracez d’abord la zone à réparer'}</span>
+      </div>
+      <div class="button-row">
+        <button class="btn ghost sm" data-action="clear-patch" ${rect ? '' : 'disabled'}>Annuler la zone</button>
+      </div>
+      <p class="options-hint">Sans correcteur, la zone propre est copiée telle quelle ; avec, sa couleur moyenne est ajustée à celle de la zone réparée.</p>`;
+  }
+
+  private healOptionsHtml(): string {
+    const brush = this.brush;
+    return `
+      <label class="range-field">Taille <output data-paint-output="size">${brush.size} px</output>
+        <input type="range" min="4" max="300" step="1" data-paint-field="size" value="${Math.min(300, brush.size)}">
+      </label>
+      <label class="range-field">Dureté <output data-paint-output="hardness">${Math.round(brush.hardness * 100)} %</output>
+        <input type="range" min="0" max="100" step="1" data-paint-field="hardness" value="${Math.round(brush.hardness * 100)}">
+      </label>
+      <label class="range-field">Opacité <output data-paint-output="opacity">${Math.round(brush.opacity * 100)} %</output>
+        <input type="range" min="1" max="100" step="1" data-paint-field="opacity" value="${Math.round(brush.opacity * 100)}">
+      </label>
+      ${this.paintTargetHtml()}
+      <p class="options-hint">Le correcteur ramène le voisinage immédiat sur la tache : idéal pour un capteur sale, une poussière, un petit défaut de peau.</p>`;
   }
 
   private cropOptionsHtml(): string {
@@ -1532,6 +1969,16 @@ export class SuperPhotoEditor {
       });
     }
 
+    const forget = document.getElementById('prefs-forget-session');
+    forget?.addEventListener('click', () => {
+      void clearSession().then(() => {
+        this.lastSessionAt = 0;
+        this.autosaveState = 'idle';
+        this.syncAutosaveBadge();
+        this.toast('Session enregistrée effacée', 'success');
+      });
+    });
+
     onPreferencesChange((preferences) => {
       if (preferencesEqual(this.preferences, preferences)) return;
       this.preferences = preferences;
@@ -1614,6 +2061,14 @@ export class SuperPhotoEditor {
     if (!changed || changed === 'coordinates') this.syncCoordinatesVisibility();
     if (!changed || changed === 'smoothZoom') this.applyZoom();
     if (changed === 'autoFit' && this.preferences.autoFit && this.fitMode) this.fitToView();
+    if (changed === 'autosave') {
+      if (this.preferences.autosave) this.scheduleAutosave(200);
+      else {
+        window.clearTimeout(this.autosaveTimer);
+        this.autosaveTimer = 0;
+      }
+      this.syncAutosaveBadge();
+    }
     this.updateStatus();
   }
 
@@ -1672,6 +2127,15 @@ export class SuperPhotoEditor {
       if (gradient) {
         this.gradientOptions.type = (gradient.dataset.gradient as 'linear' | 'radial') ?? 'linear';
         this.renderToolOptions();
+        return;
+      }
+      const brushPreset = (event.target as HTMLElement).closest<HTMLElement>('[data-brush-size]');
+      if (brushPreset) {
+        const size = Number(brushPreset.dataset.brushSize);
+        if (Number.isFinite(size) && size > 0) {
+          this.brush.size = size;
+          this.renderToolOptions();
+        }
         return;
       }
       const channel = (event.target as HTMLElement).closest<HTMLElement>('[data-channel]');
@@ -1744,6 +2208,17 @@ export class SuperPhotoEditor {
       this.onGradientFieldInput(target);
       return;
     }
+    if (target.matches('[data-paint-field]')) {
+      this.onPaintFieldInput(target);
+      return;
+    }
+    if (target.matches('[data-wand-field]')) {
+      this.onWandFieldInput(target);
+      return;
+    }
+    if (target.matches('[data-patch-field]')) {
+      this.onPatchFieldInput(target);
+    }
   }
 
   private onOptionChange(event: Event): void {
@@ -1767,6 +2242,12 @@ export class SuperPhotoEditor {
     }
     if (target.matches('[data-path-field]')) {
       this.onPathFieldInput(target);
+    }
+    if (target.matches('[data-wand-field]')) {
+      this.onWandFieldInput(target);
+    }
+    if (target.matches('[data-patch-field]')) {
+      this.onPatchFieldInput(target);
     }
   }
 
@@ -1854,6 +2335,61 @@ export class SuperPhotoEditor {
     }
   }
 
+  private onPaintFieldInput(
+    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  ): void {
+    const key = target.dataset.paintField;
+    if (!key) return;
+    const value = Number(target.value);
+    let label = '';
+    if (key === 'size') {
+      this.brush.size = clamp(value, 1, 600);
+      label = `${this.brush.size} px`;
+    } else if (key === 'hardness') {
+      this.brush.hardness = clamp(value / 100, 0, 1);
+      label = `${Math.round(this.brush.hardness * 100)} %`;
+    } else if (key === 'opacity') {
+      this.brush.opacity = clamp(value / 100, 0.01, 1);
+      label = `${Math.round(this.brush.opacity * 100)} %`;
+    } else if (key === 'spacing') {
+      this.brush.spacing = clamp(value / 100, 0.02, 1);
+      label = `${Math.round(this.brush.spacing * 100)} %`;
+    } else if (key === 'pencilSize') {
+      this.pencilOptions.size = clamp(value, 1, 48);
+      label = `${this.pencilOptions.size} px`;
+    } else if (key === 'pencilOpacity') {
+      this.pencilOptions.opacity = clamp(value, 1, 100);
+      label = `${this.pencilOptions.opacity} %`;
+    }
+    const output = this.toolOptions.querySelector(`[data-paint-output="${key}"]`);
+    if (output && label) output.textContent = label;
+    this.syncRangeFills();
+  }
+
+  private onWandFieldInput(
+    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  ): void {
+    const key = target.dataset.wandField;
+    if (!key) return;
+    if (key === 'tolerance') {
+      this.wand.tolerance = clamp(Number(target.value), 0, 128);
+      const output = this.toolOptions.querySelector('[data-wand-output="tolerance"]');
+      if (output) output.textContent = String(this.wand.tolerance);
+      this.syncRangeFills();
+    } else if (key === 'contiguous') {
+      this.wand.contiguous = (target as HTMLInputElement).checked;
+    } else if (key === 'merged') {
+      this.wand.merged = (target as HTMLInputElement).checked;
+    }
+  }
+
+  private onPatchFieldInput(
+    target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  ): void {
+    if (target.dataset.patchField !== 'corrector') return;
+    this.patchOptions.corrector = (target as HTMLInputElement).checked;
+  }
+
   private onPathFieldInput(
     target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
   ): void {
@@ -1932,6 +2468,12 @@ export class SuperPhotoEditor {
         break;
       case 'new-path':
         this.createPathLayer();
+        break;
+      case 'clear-patch':
+        this.patchSourceRect = null;
+        this.renderOverlay();
+        this.renderToolOptions();
+        this.setMessage('Zone annulée');
         break;
       case 'close-path':
         this.closeActivePath();
@@ -2023,6 +2565,24 @@ export class SuperPhotoEditor {
         this.renderAll();
         return;
       }
+      if (action === 'mask') {
+        const layer = this.doc.layers.find((item) => item.id === layerId);
+        if (!layer) return;
+        if (this.doc.activeLayerId !== layerId) this.selectLayer(layerId);
+        if (layer.maskEnabled === false) {
+          layer.maskEnabled = true;
+          this.layersDirty = true;
+          this.renderAll();
+          this.setMessage('Masque réactivé');
+          return;
+        }
+        layer.maskEditing = !layer.maskEditing;
+        this.layersDirty = true;
+        this.renderAll();
+        this.renderToolOptions();
+        this.setMessage(layer.maskEditing ? 'Vous peignez le masque' : 'Vous peignez les pixels');
+        return;
+      }
       this.selectLayer(layerId);
     });
 
@@ -2034,6 +2594,7 @@ export class SuperPhotoEditor {
     });
 
     byId<HTMLButtonElement>('layer-add').addEventListener('click', () => this.addNewLayer());
+    byId<HTMLButtonElement>('layer-mask').addEventListener('click', () => this.toggleMaskForActiveLayer());
     byId<HTMLButtonElement>('layer-duplicate').addEventListener('click', () => this.duplicateActiveLayer());
     byId<HTMLButtonElement>('layer-delete').addEventListener('click', () => this.deleteActiveLayer());
     byId<HTMLButtonElement>('layer-up').addEventListener('click', () => this.moveActiveLayer(1));
@@ -2080,8 +2641,7 @@ export class SuperPhotoEditor {
     const blend = byId<HTMLSelectElement>('layer-blend');
     blend.innerHTML = BLEND_OPTIONS.map(
       (option) => `<option value="${option.value}">${option.label}</option>`,
-    ).join('');
-    blend.addEventListener('change', () => {
+    ).join('');    blend.addEventListener('change', () => {
       const layer = this.activeLayer;
       if (!layer) return;
       const before = layer.blend;
@@ -2128,6 +2688,139 @@ export class SuperPhotoEditor {
       });
       this.renderLayers();
     });
+
+    const maskEnabled = byId<HTMLInputElement>('layer-mask-enabled');
+    maskEnabled.addEventListener('change', () => {
+      const layer = this.activeLayer;
+      if (!layer?.mask) return;
+      if (this.adjustment) this.cancelAdjustment();
+      const before = layer.maskEnabled !== false;
+      const after = maskEnabled.checked;
+      layer.maskEnabled = after;
+      this.history.push({
+        label: after ? 'Activer le masque' : 'Désactiver le masque',
+        undo: () => {
+          layer.maskEnabled = before;
+          this.renderAll();
+        },
+        redo: () => {
+          layer.maskEnabled = after;
+          this.renderAll();
+        },
+      });
+      this.layersDirty = true;
+      this.renderAll();
+    });
+
+    byId<HTMLButtonElement>('layer-mask-edit').addEventListener('click', () => {
+      const layer = this.activeLayer;
+      if (!layer?.mask) return;
+      layer.maskEditing = !layer.maskEditing;
+      this.layersDirty = true;
+      this.renderAll();
+      this.renderToolOptions();
+    });
+
+    byId<HTMLButtonElement>('layer-mask-apply').addEventListener('click', () => this.applyActiveMask());
+    byId<HTMLButtonElement>('layer-mask-delete').addEventListener('click', () => this.deleteActiveMask());
+  }
+
+  private toggleMaskForActiveLayer(): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) return;
+    if (layer.mask) {
+      layer.maskEditing = !layer.maskEditing;
+      this.layersDirty = true;
+      this.renderAll();
+      this.renderToolOptions();
+      this.setMessage(layer.maskEditing ? 'Vous peignez le masque' : 'Vous peignez les pixels');
+      return;
+    }
+    if (this.adjustment) this.cancelAdjustment();
+    const mask = createMask(doc.width, doc.height);
+    layer.mask = mask;
+    layer.maskEnabled = true;
+    layer.maskEditing = true;
+    this.history.push({
+      label: 'Ajouter un masque',
+      undo: () => {
+        layer.mask = undefined;
+        layer.maskEnabled = undefined;
+        layer.maskEditing = false;
+        this.renderAll();
+      },
+      redo: () => {
+        layer.mask = mask;
+        layer.maskEnabled = true;
+        layer.maskEditing = true;
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage('Masque ajouté — peignez en sombre pour masquer');
+  }
+
+  private applyActiveMask(): void {
+    const layer = this.activeLayer;
+    if (!layer?.mask) return;
+    const mask = layer.mask;
+    const before = cloneCanvas(layer.canvas);
+    const beforeEnabled = layer.maskEnabled;
+    flattenMask(layer);
+    const after = cloneCanvas(layer.canvas);
+    this.history.push({
+      label: 'Appliquer le masque',
+      undo: () => {
+        layer.canvas = before;
+        layer.mask = mask;
+        layer.maskEnabled = beforeEnabled;
+        this.renderAll();
+      },
+      redo: () => {
+        layer.canvas = after;
+        layer.mask = undefined;
+        layer.maskEnabled = undefined;
+        layer.maskEditing = false;
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage('Masque appliqué aux pixels');
+  }
+
+  private deleteActiveMask(): void {
+    const layer = this.activeLayer;
+    if (!layer?.mask) return;
+    const mask = layer.mask;
+    const wasEnabled = layer.maskEnabled;
+    const wasEditing = layer.maskEditing;
+    layer.mask = undefined;
+    layer.maskEnabled = undefined;
+    layer.maskEditing = false;
+    this.history.push({
+      label: 'Supprimer le masque',
+      undo: () => {
+        layer.mask = mask;
+        layer.maskEnabled = wasEnabled;
+        layer.maskEditing = wasEditing;
+        this.renderAll();
+      },
+      redo: () => {
+        layer.mask = undefined;
+        layer.maskEnabled = undefined;
+        layer.maskEditing = false;
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage('Masque supprimé');
   }
 
   private selectLayer(layerId: string): void {
@@ -2276,6 +2969,10 @@ export class SuperPhotoEditor {
     if (this.adjustment) this.cancelAdjustment();
     this.pendingCrop = null;
     this.renderOverlay();
+    if (layer.mask && layer.maskEditing) {
+      layer.maskEditing = false;
+      this.layersDirty = true;
+    }
     const ctx = canvasContext(layer.canvas);
     const original = ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
 
@@ -3046,6 +3743,29 @@ export class SuperPhotoEditor {
           points: [point],
         };
         break;
+      case 'magic-wand':
+        this.applyMagicWand(point, event.shiftKey);
+        break;
+      case 'pencil':
+      case 'brush':
+      case 'eraser':
+        this.beginPaint(point, event.altKey && this.activeTool !== 'eraser');
+        break;
+      case 'heal':
+        this.beginPaint(point, false);
+        break;
+      case 'stamp':
+        if (event.altKey) {
+          this.stampSource = { ...point };
+          this.setMessage(`Source du tampon · x ${Math.round(point.x)} · y ${Math.round(point.y)}`);
+          this.renderToolOptions();
+        } else {
+          this.beginPaint(point, false);
+        }
+        break;
+      case 'patch':
+        this.onPatchDown(point);
+        break;
       case 'crop':
         this.drag = { kind: 'crop', start: point, current: point, ratio: this.cropRatio };
         break;
@@ -3146,6 +3866,14 @@ export class SuperPhotoEditor {
       case 'move':
         this.onMoveDrag(drag, this.docPoint(event));
         break;
+      case 'paint':
+        this.onPaintDrag(drag, this.docPoint(event));
+        break;
+      case 'patch-region':
+      case 'patch-move':
+        drag.current = this.docPoint(event);
+        this.renderOverlay();
+        break;
       case 'pen-anchor':
       case 'pen-handle':
       case 'pen-new-anchor':
@@ -3168,6 +3896,27 @@ export class SuperPhotoEditor {
         break;
       case 'marquee':
         this.finishMarquee(drag);
+        break;
+      case 'paint':
+        this.finishPaint(drag);
+        break;
+      case 'patch-region': {
+        const rect = normalizeRect(drag.start, drag.current);
+        this.patchSourceRect =
+          rect.w >= 4 && rect.h >= 4
+            ? {
+                x: Math.round(rect.x),
+                y: Math.round(rect.y),
+                w: Math.round(rect.w),
+                h: Math.round(rect.h),
+              }
+            : null;
+        this.renderOverlay();
+        this.renderToolOptions();
+        break;
+      }
+      case 'patch-move':
+        this.applyPatchMove(drag);
         break;
       case 'crop':
         this.finishCrop(drag);
@@ -3299,6 +4048,353 @@ export class SuperPhotoEditor {
     }
     this.layersDirty = true;
     this.renderAll();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Peinture (crayon, pinceau, gomme, tampon, correcteur)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private paintTargetCanvas(): {
+    layer: Layer;
+    canvas: HTMLCanvasElement;
+    isMask: boolean;
+  } | null {
+    const layer = this.activeLayer;
+    if (!layer) return null;
+    if (layer.mask && layer.maskEditing) return { layer, canvas: layer.mask, isMask: true };
+    if (layer.kind !== 'raster') {
+      // Peindre un texte ou un tracé le rasterise : les métadonnées éditables
+      // ne décrivent plus les pixels, on les retire.
+      layer.kind = 'raster';
+      layer.text = undefined;
+      layer.path = undefined;
+    }
+    return { layer, canvas: layer.canvas, isMask: false };
+  }
+
+  private strokeAppearance(    isMask: boolean,
+    erase: boolean,
+  ): { composite: GlobalCompositeOperation; color: string } {
+    if (erase) return { composite: 'destination-out', color: '#000000' };
+    if (isMask) {
+      return brushColorForMask(this.primaryColor) === 'reveal'
+        ? { composite: 'source-over', color: '#ffffff' }
+        : { composite: 'destination-out', color: '#000000' };
+    }
+    return { composite: 'source-over', color: this.primaryColor };
+  }
+
+  private beginPaint(point: Point, erase: boolean): void {
+    const target = this.paintTargetCanvas();
+    if (!target) return;
+    const tool = this.activeTool;
+    const before = cloneCanvas(target.canvas);
+    let source: HTMLCanvasElement | null = null;
+    let offset: Point | null = null;
+    let shift: { r: number; g: number; b: number } | null = null;
+    if (tool === 'stamp' || tool === 'heal') {
+      // On échantillonne l'image composée : c'est ce que l'utilisateur voit,
+      // et cela évite de cloner la transparence d'un calque isolé.
+      source = cloneCanvas(this.display);
+      if (!source) return;
+      const radius = Math.max(2, this.brush.size / 2);
+      if (tool === 'stamp') {
+        if (!this.stampSource) {
+          this.toast('Alt+clic sur l’image pour définir la source du tampon.', 'info');
+          return;
+        }
+        offset = { x: this.stampSource.x - point.x, y: this.stampSource.y - point.y };
+      } else {
+        offset = this.healOffset(source, point, radius);
+      }
+      if (this.patchOptions.corrector) {
+        const sample = { x: point.x + offset.x, y: point.y + offset.y };
+        shift = colorShift(
+          meanColorAround(source, sample, radius),
+          meanColorAround(source, point, radius),
+        );
+      }
+    }
+    const label =
+      tool === 'stamp'
+        ? 'Tampon'
+        : tool === 'heal'
+          ? 'Correcteur'
+          : tool === 'eraser'
+            ? 'Gomme'
+            : tool === 'pencil'
+              ? 'Crayon'
+              : 'Pinceau';
+    const drag: DragState = {
+      kind: 'paint',
+      layerId: target.layer.id,
+      target: target.isMask ? 'mask' : 'layer',
+      last: { ...point },
+      carry: 0,
+      before,
+      source,
+      offset,
+      label,
+      // La gomme efface toujours ; ailleurs Alt transforme le pinceau en gomme.
+      erase: erase || tool === 'eraser',
+      shift,
+    };
+    this.drag = drag;
+    this.paintAt(drag, point, true);
+    this.updateStatus();
+  }
+
+  /**
+   * Correcteur : on cherche, parmi quatre zones voisines, celle qui ressemble le
+   * plus aux autres (consensus). C'est un rejet de valeur aberrante : la tache
+   * qu'on veut effacer n'est jamais retenue comme source.
+   */
+  private healOffset(source: HTMLCanvasElement, point: Point, radius: number): Point {
+    const distance = radius * 2.1;
+    const candidates = [
+      { x: point.x + distance, y: point.y },
+      { x: point.x - distance, y: point.y },
+      { x: point.x, y: point.y + distance },
+      { x: point.x, y: point.y - distance },
+    ].filter(
+      (candidate) =>
+        candidate.x >= radius &&
+        candidate.y >= radius &&
+        candidate.x <= source.width - radius &&
+        candidate.y <= source.height - radius,
+    );
+    if (candidates.length === 0) return { x: 0, y: 0 };
+    const means = candidates.map((candidate) => meanColorAround(source, candidate, radius));
+    const consensus = means.reduce(
+      (total, mean) => ({
+        r: total.r + mean.r / means.length,
+        g: total.g + mean.g / means.length,
+        b: total.b + mean.b / means.length,
+      }),
+      { r: 0, g: 0, b: 0 },
+    );
+    let best = 0;
+    let bestDistance = Infinity;
+    means.forEach((mean, index) => {
+      const delta =
+        Math.abs(mean.r - consensus.r) +
+        Math.abs(mean.g - consensus.g) +
+        Math.abs(mean.b - consensus.b);
+      if (delta < bestDistance) {
+        bestDistance = delta;
+        best = index;
+      }
+    });
+    const chosen = candidates[best];
+    if (!chosen) return { x: 0, y: 0 };
+    return { x: chosen.x - point.x, y: chosen.y - point.y };
+  }
+
+  private paintAt(drag: Extract<DragState, { kind: 'paint' }>, to: Point, force = false): void {
+    const doc = this.doc;
+    const layer = doc?.layers.find((item) => item.id === drag.layerId);
+    if (!doc || !layer) return;
+    const canvas = drag.target === 'mask' ? layer.mask : layer.canvas;
+    if (!canvas) return;
+    const tool = this.activeTool;
+    const { composite, color } = this.strokeAppearance(drag.target === 'mask', drag.erase);
+    const brush = { ...this.brush };
+    const alpha = clamp(brush.opacity, 0.02, 1);
+    const ctx = canvasContext(canvas);
+    ctx.save();
+    this.applySelectionClip(ctx);
+
+    const stampAt = (point: Point): void => {
+      if (tool === 'stamp' || tool === 'heal') {
+        if (!drag.source) return;
+        const src = {
+          x: point.x + (drag.offset?.x ?? 0),
+          y: point.y + (drag.offset?.y ?? 0),
+        };
+        cloneStamp(ctx, drag.source, src, point, {
+          size: brush.size,
+          hardness: brush.hardness,
+          alpha,
+          shift: drag.shift ?? undefined,
+        });
+        return;
+      }
+      paintStamp(ctx, point, brush, color, composite, alpha);
+    };
+
+    if (tool === 'pencil') {
+      strokePencil(
+        ctx,
+        drag.last,
+        to,
+        this.pencilOptions.size,
+        color,
+        composite,
+        clamp(this.pencilOptions.opacity / 100, 0.02, 1),
+      );
+    } else if (force) {
+      // Premier contact : on tamponne toujours, même si le geste est plus court
+      // que l'espacement entre deux tampons.
+      stampAt(drag.last);
+      drag.carry = 0;
+    } else {
+      drag.carry = walkStroke(drag.last, to, brush.size, brush.spacing, drag.carry, stampAt);
+    }
+    ctx.restore();
+    drag.last = { ...to };
+    this.renderCanvas();
+    this.renderOverlay();
+  }
+
+  private onPaintDrag(drag: Extract<DragState, { kind: 'paint' }>, point: Point): void {
+    this.paintAt(drag, point);
+  }
+
+  private finishPaint(drag: Extract<DragState, { kind: 'paint' }>): void {
+    const doc = this.doc;
+    const layer = doc?.layers.find((item) => item.id === drag.layerId);
+    if (!doc || !layer) return;
+    const canvas = drag.target === 'mask' ? layer.mask : layer.canvas;
+    if (!canvas) return;
+    const before = drag.before;
+    const after = cloneCanvas(canvas);
+    this.history.push({
+      label: drag.label,
+      undo: () => {
+        const ctx = canvasContext(canvas);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(before, 0, 0);
+        this.renderAll();
+      },
+      redo: () => {
+        const ctx = canvasContext(canvas);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(after, 0, 0);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Baguette magique
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private applyMagicWand(point: Point, add: boolean): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) return;
+    const source = this.wand.merged ? this.display : layer.canvas;
+    const found = magicWandSelection(
+      source,
+      Math.floor(point.x),
+      Math.floor(point.y),
+      this.wand.tolerance,
+      this.wand.contiguous,
+    );
+    if (!found) {
+      this.selection = null;
+      this.setMessage('Aucun pixel à sélectionner à cet endroit.');
+      this.renderOverlay();
+      this.renderToolOptions();
+      return;
+    }
+    if (add && this.selection && this.selection.type === 'poly' && found.type === 'poly') {
+      const rings = [...selectionRings(this.selection), ...selectionRings(found)];
+      const first = rings[0];
+      if (first) {
+        this.selection = { type: 'poly', points: first, rings, invert: this.selection.invert };
+      }
+    } else {
+      this.selection = found;
+    }
+    const bounds = selectionBounds(this.selection);
+    this.setMessage(
+      `Baguette magique · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px`,
+    );
+    this.renderOverlay();
+    this.renderToolOptions();
+    this.updateStatus();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Outil pièce
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private onPatchDown(point: Point): void {
+    const rect = this.patchSourceRect;
+    if (
+      rect &&
+      point.x >= rect.x &&
+      point.x <= rect.x + rect.w &&
+      point.y >= rect.y &&
+      point.y <= rect.y + rect.h
+    ) {
+      this.drag = { kind: 'patch-move', start: point, current: point };
+    } else {
+      this.patchSourceRect = null;
+      this.drag = { kind: 'patch-region', start: point, current: point };
+    }
+    this.renderOverlay();
+  }
+
+  private applyPatchMove(drag: Extract<DragState, { kind: 'patch-move' }>): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    const rect = this.patchSourceRect;
+    if (!doc || !layer || !rect) return;
+    const dx = drag.current.x - drag.start.x;
+    const dy = drag.current.y - drag.start.y;
+    if (Math.hypot(dx, dy) < 2) {
+      this.setMessage('Glissez la zone sur une zone propre pour la réparer.');
+      return;
+    }
+    if (layer.mask && layer.maskEditing) {
+      this.toast('Revenez aux pixels du calque pour utiliser la pièce.', 'info');
+      return;
+    }
+    if (layer.kind !== 'raster') {
+      layer.kind = 'raster';
+      layer.text = undefined;
+      layer.path = undefined;
+    }
+    const before = cloneCanvas(layer.canvas);
+    const composite = cloneCanvas(this.display);
+    const width = rect.w;
+    const height = rect.h;
+    const dst = { x: rect.x + dx, y: rect.y + dy };
+    const shift = this.patchOptions.corrector
+      ? colorShift(
+          meanColorAround(composite, { x: dst.x + width / 2, y: dst.y + height / 2 },
+            Math.max(width, height) / 2),
+          meanColorAround(composite, { x: rect.x + width / 2, y: rect.y + height / 2 },
+            Math.max(width, height) / 2),
+        )
+      : null;
+    patchRegion(layer.canvas, composite, rect, dst, shift);
+    const after = cloneCanvas(layer.canvas);
+    this.history.push({
+      label: this.patchOptions.corrector ? 'Pièce (correcteur)' : 'Pièce',
+      undo: () => {
+        const ctx = canvasContext(layer.canvas);
+        ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        ctx.drawImage(before, 0, 0);
+        this.renderAll();
+      },
+      redo: () => {
+        const ctx = canvasContext(layer.canvas);
+        ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        ctx.drawImage(after, 0, 0);
+        this.renderAll();
+      },
+    });
+    this.patchSourceRect = null;
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage('Zone réparée');
   }
 
   private finishMarquee(drag: Extract<DragState, { kind: 'marquee' }>): void {
@@ -3684,22 +4780,26 @@ export class SuperPhotoEditor {
         Math.PI * 2,
       );
     } else {
-      const first = selection.points[0];
-      if (!first) return;
-      path.moveTo(first.x, first.y);
-      for (let i = 1; i < selection.points.length; i += 1) {
-        const point = selection.points[i];
-        if (point) path.lineTo(point.x, point.y);
+      const rings = selectionRings(selection);
+      for (const ring of rings) {
+        const first = ring[0];
+        if (!first) continue;
+        path.moveTo(first.x, first.y);
+        for (let i = 1; i < ring.length; i += 1) {
+          const point = ring[i];
+          if (point) path.lineTo(point.x, point.y);
+        }
+        path.closePath();
       }
-      path.closePath();
     }
+    const evenOdd = selection.type === 'poly' && selectionRings(selection).length > 1;
     if (selection.invert) {
       const even = new Path2D();
       even.rect(0, 0, doc.width, doc.height);
       even.addPath(path);
       ctx.clip(even, 'evenodd');
     } else {
-      ctx.clip(path);
+      ctx.clip(path, evenOdd ? 'evenodd' : 'nonzero');
     }
   }
 
@@ -4113,6 +5213,13 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
+        if (this.patchSourceRect) {
+          this.patchSourceRect = null;
+          this.renderOverlay();
+          this.renderToolOptions();
+          event.preventDefault();
+          return;
+        }
         this.selection = null;
         this.renderOverlay();
         event.preventDefault();
@@ -4203,10 +5310,17 @@ export class SuperPhotoEditor {
       const shortcuts: Record<string, ToolId> = {
         v: 'select',
         m: 'marquee',
+        w: 'magic-wand',
         c: 'crop',
         u: 'shapes',
         p: 'pen',
         t: 'text',
+        n: 'pencil',
+        b: 'brush',
+        e: 'eraser',
+        s: 'stamp',
+        j: 'patch',
+        k: 'heal',
         i: 'eyedropper',
         g: 'gradient',
         z: 'zoom',
@@ -4216,6 +5330,17 @@ export class SuperPhotoEditor {
       if (tool) {
         event.preventDefault();
         this.setTool(tool);
+        return;
+      }
+      if (event.key === '[' || event.key === ']') {
+        event.preventDefault();
+        const factor = event.key === '[' ? 1 / 1.25 : 1.25;
+        this.brush.size = clamp(Math.round(this.brush.size * factor), 1, 600);
+        this.pencilOptions.size = clamp(Math.round(this.pencilOptions.size * factor), 1, 48);
+        if (this.activeTool === 'pencil' || this.activeTool === 'brush' || this.activeTool === 'eraser' || this.activeTool === 'stamp' || this.activeTool === 'heal') {
+          this.renderToolOptions();
+        }
+        this.setMessage(`Taille ${this.brush.size} px`);
       }
     });
 
@@ -4367,8 +5492,8 @@ export class SuperPhotoEditor {
 }
 
 export function startSuperPhoto(): void {
-  const scope = window as unknown as { __superphotoStarted?: boolean };
+  const scope = window as unknown as { __superphotoStarted?: boolean; __superphoto?: SuperPhotoEditor };
   if (scope.__superphotoStarted) return;
   scope.__superphotoStarted = true;
-  new SuperPhotoEditor();
+  scope.__superphoto = new SuperPhotoEditor();
 }

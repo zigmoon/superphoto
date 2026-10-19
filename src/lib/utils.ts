@@ -111,10 +111,42 @@ export function selectionContains(
       const dy = (y - (rect.y + ry)) / ry;
       inside = dx * dx + dy * dy <= 1;
     }
+  } else if (selection.rings && selection.rings.length > 0) {
+    // Remplissage pair-impair sur tous les anneaux : un trou annule la zone.
+    let crossings = 0;
+    for (const ring of selection.rings) {
+      if (pointInPolygon(x, y, ring)) crossings += 1;
+    }
+    inside = crossings % 2 === 1;
   } else {
     inside = pointInPolygon(x, y, selection.points);
   }
   return selection.invert ? !inside : inside;
+}
+
+/** Boîte englobante d'une sélection, sans parcourir les pixels. */
+export function selectionBounds(selection: Selection): Rect {
+  if (selection.type !== 'poly') return selection.rect;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const rings = selection.rings && selection.rings.length > 0 ? selection.rings : [selection.points];
+  for (const ring of rings) {
+    for (const point of ring) {
+      if (point.x < minX) minX = point.x;
+      if (point.y < minY) minY = point.y;
+      if (point.x > maxX) maxX = point.x;
+      if (point.y > maxY) maxY = point.y;
+    }
+  }
+  if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+export function selectionRings(selection: Selection): Point[][] {
+  if (selection.type !== 'poly') return [];
+  return selection.rings && selection.rings.length > 0 ? selection.rings : [selection.points];
 }
 
 export function canvasToBlob(
