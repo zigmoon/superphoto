@@ -1,4 +1,7 @@
 import { defineConfig } from 'astro/config';
+import { readFileSync } from 'node:fs';
+
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 
 /**
  * SuperPhoto — configuration Astro.
@@ -41,6 +44,10 @@ export default defineConfig({
   },
 
   vite: {
+    define: {
+      // Version unique : package.json alimente l'interface (onglet À propos).
+      __APP_VERSION__: JSON.stringify(version),
+    },
     build: {
       assetsInlineLimit: 0,
       sourcemap: true,
