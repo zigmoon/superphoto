@@ -82,7 +82,7 @@ Click the mask thumbnail to switch between painting pixels and painting the mask
 
 | Tool | What it does |
 | --- | --- |
-| **Select** (`V`) | Click to pick a layer, drag to move its content. |
+| **Select** (`V`) | Pick a layer, draw its **transform box** (8 handles), drag the box to move, drag a handle to resize. |
 | **Marquee** (`M`) | Rectangle, ellipse or lasso selection with a **feather** slider (0–120 px). |
 | **Magic wand** (`W`) | Select by color proximity — tolerance, contiguous areas, sample the composite image, with the same feather. |
 | **Crop** (`C`) | Free frame or 1:1, 4:3, 16:9, 3:2, 4:5; confirm with Enter. |
@@ -124,6 +124,15 @@ adjustment, and it is shown in the canvas as a translucent band.
 - **Invert selection**
 - **Deselect** (`Esc`)
 - **Select all** (`Ctrl/⌘ + A`)
+
+### Selecting and transforming an object
+
+Selecting a layer (click it in the stack, or click its pixels with the Move tool)
+draws a **bounding box with eight handles** around its content — the box is
+measured on the real pixels, not on the canvas. Drag the box to move the layer,
+drag a handle to resize it, `Shift` keeps the proportions, `Alt` scales from the
+centre. Every gesture lands exactly where the pointer is, at any zoom, and each
+one is a single undo step.
 
 ### Export
 
@@ -262,19 +271,30 @@ any background without a black square behind it.
 
 ## Keyboard shortcuts
 
+Press `F1` (or `?`) anywhere to open the full, always up-to-date list.
+
 | Shortcut | Action |
 | --- | --- |
 | `V M W C U P T N B E S J K L I G Z H` | tools (Select, Marquee, Wand, Crop, Shapes, Pen, Text, Pencil, Brush, Eraser, Clone stamp, Patch, Heal, Light spot, Eyedropper, Gradient, Zoom, Hand) |
 | `[` / `]` | brush (or pencil) size |
 | `Alt + click` | stamp source · temporary eraser · secondary color |
-| `Ctrl/⌘ + Z` / `Ctrl/⌘ + Shift + Z` | undo / redo |
+| `Ctrl/⌘ + Z` / `Ctrl/⌘ + Shift + Z` / `Ctrl/⌘ + Y` | undo / redo |
 | `Ctrl/⌘ + N` / `Ctrl/⌘ + O` / `Ctrl/⌘ + S` | new / open / export |
-| `Ctrl/⌘ + A` | select all |
+| `Ctrl/⌘ + Shift + N` / `Ctrl/⌘ + J` | new layer / duplicate layer |
+| `Ctrl/⌘ + E` | merge down |
+| `Ctrl/⌘ + [` / `Ctrl/⌘ + ]` | move the layer down / up |
+| `Alt + [` / `Alt + ]` | select the layer below / above |
+| `Ctrl/⌘ + T` | free transform (box + handles) |
+| `← ↑ → ↓` (`Shift` ×10) | nudge the layer content by 1 px |
+| `Ctrl/⌘ + A` / `Ctrl/⌘ + D` / `Ctrl/⌘ + Shift + I` | select all / deselect / invert |
+| `Del` | clear the selection · **delete the layer** when nothing is selected |
+| `Shift + Del` | clear the whole layer content, keeping the layer |
+| `Alt + Del` / `Ctrl/⌘ + Del` | fill the selection with the primary / secondary color |
 | `Ctrl/⌘ + 0` / `Ctrl/⌘ + 1` | fit to window / zoom 100 % |
 | `Ctrl/⌘ + +` / `Ctrl/⌘ + -` | zoom in / out |
+| `X` / `D` | swap / reset the primary and secondary colors |
 | `Enter` | apply the crop · finish the pen path |
 | `Esc` | cancel the adjustment, crop or selection |
-| `Del` / `Alt + ⌫` | clear the selection · fill it |
 | `Space` | temporary hand |
 | `F11` | full screen |
 

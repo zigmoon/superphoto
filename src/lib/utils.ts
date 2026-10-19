@@ -124,6 +124,93 @@ export function selectionContains(
   return selection.invert ? !inside : inside;
 }
 
+/**
+ * Boîte englobante des pixels visibles d'un calque.
+ *
+ * Deux passes : un balayage réduit (512 px de côté) situe la matière, puis un
+ * balayage à pleine résolution affine **la zone trouvée**. Les petits objets
+ * sont ainsi exacts au pixel, et une image pleine page reste instantanée.
+ */
+export function alphaBounds(canvas: HTMLCanvasElement, threshold = 4): Rect | null {
+  if (canvas.width <= 0 || canvas.height <= 0) return null;
+  const scale = Math.min(1, 512 / Math.max(canvas.width, canvas.height));
+  const width = Math.max(1, Math.round(canvas.width * scale));
+  const height = Math.max(1, Math.round(canvas.height * scale));
+  const scratch = createCanvas(width, height);
+  const ctx = scratch.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(canvas, 0, 0, width, height);
+  const coarse = scanAlpha(ctx.getImageData(0, 0, width, height), threshold);
+  if (!coarse) return null;
+
+  const inverse = 1 / scale;
+  let rect: Rect = {
+    x: coarse.x * inverse,
+    y: coarse.y * inverse,
+    w: (coarse.w + 1) * inverse,
+    h: (coarse.h + 1) * inverse,
+  };
+
+  if (scale < 1) {
+    // Marge d'un pixel réduit de chaque côté, puis affinage si la zone reste
+    // raisonnable (au-delà, on garde l'approximation : le gain serait nul).
+    const pad = 2;
+    const rx = Math.max(0, Math.floor(coarse.x * inverse) - pad);
+    const ry = Math.max(0, Math.floor(coarse.y * inverse) - pad);
+    const rw = Math.min(canvas.width - rx, Math.ceil((coarse.w + 1) * inverse) + pad * 2);
+    const rh = Math.min(canvas.height - ry, Math.ceil((coarse.h + 1) * inverse) + pad * 2);
+    if (rw > 0 && rh > 0 && rw * rh <= 3_600_000) {
+      const fine = scanAlpha(
+        canvas.getContext('2d', { willReadFrequently: true })?.getImageData(rx, ry, rw, rh) ?? null,
+        threshold,
+      );
+      if (fine) rect = { x: rx + fine.x, y: ry + fine.y, w: fine.w + 1, h: fine.h + 1 };
+    }
+  }
+
+  return rect;
+}
+
+/** Première et dernière ligne/colonne contenant de la matière. */
+function scanAlpha(data: ImageData | null, threshold: number): Rect | null {
+  if (!data) return null;
+  const { width, height } = data;
+  const pixels = data.data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width * 4;
+    for (let x = 0; x < width; x += 1) {
+      if ((pixels[row + x * 4 + 3] ?? 0) > threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/** Boîte englobante d'un nuage de points (ancres, poignées de plume…). */
+export function pointsBounds(points: Point[]): Rect | null {
+  if (points.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 /** Boîte englobante d'une sélection, sans parcourir les pixels. */
 export function selectionBounds(selection: Selection): Rect {
   if (selection.type !== 'poly') return selection.rect;

@@ -175,10 +175,27 @@ import BrandMark from './BrandMark.astro';
             <span><kbd>Ctrl W</kbd> <em data-i18n="sc.closeTab">Close the current tab</em></span>
             <span><kbd>Ctrl ⇥</kbd> <em data-i18n="sc.nextTab">Next / previous tab</em></span>
             <span><kbd>Ctrl Z</kbd> <em data-i18n="sc.undo">Undo</em></span>
-            <span><kbd>Ctrl Y</kbd> <em data-i18n="sc.redo">Redo</em></span>
+            <span><kbd>Ctrl ⇧ Z</kbd> <kbd>Ctrl Y</kbd> <em data-i18n="sc.redo">Redo</em></span>
+            <span><kbd>F1</kbd> <kbd>?</kbd> <em data-i18n="sc.help">Show this shortcut list</em></span>
+          </div>
+        </div>
+        <div class="prefs-section">
+          <div class="prefs-section-title" data-i18n="prefs.group.layers">Layers &amp; selection</div>
+          <div class="shortcut-grid">
+            <span><kbd>Suppr</kbd> <em data-i18n="sc.delete">Delete the layer (no selection)</em></span>
+            <span><kbd>⇧ Suppr</kbd> <em data-i18n="sc.clearLayer">Clear the layer content</em></span>
+            <span><kbd>Ctrl ⇧ N</kbd> <em data-i18n="sc.newLayer">New layer</em></span>
+            <span><kbd>Ctrl J</kbd> <em data-i18n="sc.duplicateLayer">Duplicate the layer</em></span>
+            <span><kbd>Ctrl E</kbd> <em data-i18n="sc.mergeDown">Merge down</em></span>
+            <span><kbd>Ctrl [</kbd> / <kbd>Ctrl ]</kbd> <em data-i18n="sc.reorderLayer">Move the layer up / down</em></span>
+            <span><kbd>Alt [</kbd> / <kbd>Alt ]</kbd> <em data-i18n="sc.selectLayer">Select the layer above / below</em></span>
+            <span><kbd>←↑→↓</kbd> <em data-i18n="sc.nudge">Nudge by 1 px (Shift: 10 px)</em></span>
+            <span><kbd>Ctrl T</kbd> <em data-i18n="sc.transform">Free transform: box and handles</em></span>
             <span><kbd>Ctrl A</kbd> <em data-i18n="sc.selectAll">Select all</em></span>
-            <span><kbd>Del</kbd> <em data-i18n="sc.delete">Clear the selection content</em></span>
+            <span><kbd>Ctrl D</kbd> <em data-i18n="sc.deselect">Deselect</em></span>
+            <span><kbd>Ctrl ⇧ I</kbd> <em data-i18n="sc.invertSelection">Invert the selection</em></span>
             <span><kbd>Alt ⌫</kbd> <em data-i18n="sc.fill">Fill the selection with the primary color</em></span>
+            <span><kbd>Ctrl ⌫</kbd> <em data-i18n="sc.fillSecondary">Fill the selection with the secondary color</em></span>
           </div>
         </div>
         <div class="prefs-section">
@@ -189,6 +206,7 @@ import BrandMark from './BrandMark.astro';
             <span><kbd>Ctrl +</kbd> / <kbd>Ctrl −</kbd> <em data-i18n="sc.zoomInOut">Zoom in / out</em></span>
             <span><kbd>F11</kbd> <em data-i18n="sc.fullscreen">Full screen</em></span>
             <span><kbd>X</kbd> <em data-i18n="sc.swapColors">Swap colors</em></span>
+            <span><kbd>D</kbd> <em data-i18n="sc.resetColors">Default colors</em></span>
           </div>
         </div>
       </section>
