@@ -399,6 +399,9 @@ export function duplicateLayer(layer: Layer): Layer {
     ...layer,
     id: uid(),
     name: `${layer.name} copie`,
+    // Un calque verrouillé se duplique en calque libre : sinon la copie serait
+    // immédiatement inutilisable.
+    locked: false,
     canvas: (() => {
       const copy = createCanvas(layer.canvas.width, layer.canvas.height);
       const ctx = canvasContext(copy);

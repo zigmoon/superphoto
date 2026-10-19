@@ -91,6 +91,8 @@ export interface Layer {
   opacity: number;
   blend: BlendMode;
   canvas: HTMLCanvasElement;
+  /** Verrouillé : ni peinture, ni déplacement, ni suppression, ni réordonnancement. */
+  locked?: boolean;
   /** Masque de fusion : l'alpha du canvas sert de visibilité (blanc = visible). */
   mask?: HTMLCanvasElement;
   /** Masque actif (désactivable sans le supprimer). */

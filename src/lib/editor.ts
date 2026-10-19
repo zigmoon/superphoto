@@ -80,6 +80,7 @@ import {
 } from './i18n';
 import { decodeMedia, isSupportedMedia } from './media';
 import { looksLikeProject, parseProject, serializeProject, SPS_MIME } from './project';
+import { initRangePaint, paintRange, paintRanges } from './ranges';
 import { magicWandSelection } from './selection';
 import {
   clearSession,
@@ -91,6 +92,7 @@ import {
 import type {
   AdjustmentId,
   AdjustmentState,
+  Anchor,
   BlendMode,
   BrushSettings,
   CurveChannel,
@@ -466,6 +468,18 @@ export class SuperPhotoEditor {
   private readonly statusCache = new Map<string, string>();
   private readonly layerRows = new Map<string, HTMLElement>();
   private layerOrderSignature = '';
+  /** Sélection multiple (Maj / Ctrl + clic), comme dans Photoshop. */
+  private selectedLayerIds = new Set<string>();
+  /** Glissement d'une ligne de calque en cours, pour réordonner. */
+  private layerDrag: {
+    ids: string[];
+    startY: number;
+    active: boolean;
+    target: number;
+    indicator: HTMLElement;
+  } | null = null;
+  /** Un glissement vient de se terminer : le clic qui suit ne doit rien faire. */
+  private layerDragJustEnded = false;
 
   private primaryColor = '#111114';
   private secondaryColor = '#ffffff';
@@ -491,6 +505,15 @@ export class SuperPhotoEditor {
     stroke: '#111114',
     strokeWidth: 3,
   };
+
+  /** Curseur courant pour le tracé d'aperçu de la plume (espace document). */
+  private penHover: Point | null = null;
+  /** Le curseur est sur le premier point : un clic fermera le tracé. */
+  private penCloseHover = false;
+  /** Ancre survolée, pour l'aperçu de déplacement. */
+  private penHoverAnchor = -1;
+  /** Dernier clic sur une ancre, pour détecter le double-clic. */
+  private penLastClick = { at: 0, index: -1 };
 
   private textOptions = {
     fontFamily: 'Inter',
@@ -521,6 +544,7 @@ export class SuperPhotoEditor {
   private curveChannel: CurveChannel = 'rgb';
   private textEditBefore = new Map<string, TextData>();
   private layerPropBefore: number | null = null;
+  private layerPropBeforeAll: Map<string, number> | null = null;
   private newDocRatioLock = false;
   private newDocRatio = 16 / 9;
   private resizeMode: 'image' | 'canvas' = 'image';
@@ -572,6 +596,7 @@ export class SuperPhotoEditor {
     applyStaticTranslations(document);
     applyPreferences(this.preferences);
     watchSystemTheme();
+    initRangePaint();
     window.addEventListener('resize', () => this.invalidateDisplayRect(), { passive: true });
     // Les panneaux, la barre d'onglets et le plein écran déplacent la toile sans
     // provoquer d'événement `resize` : sans observateur, le rectangle mémorisé
@@ -762,6 +787,11 @@ export class SuperPhotoEditor {
       return;
     }
     if (this.activeTool !== 'select' || this.drag) return;
+    if (this.activeLayer?.locked) {
+      this.hoverHandle = null;
+      this.display.style.cursor = TOOLS[this.activeTool].cursor;
+      return;
+    }
     const box = this.gizmoRect();
     const handle = box ? this.handleAt(this.pointer, box) : null;
     if (handle !== this.hoverHandle) this.hoverHandle = handle;
@@ -1432,7 +1462,8 @@ export class SuperPhotoEditor {
 
     const pathLayer = this.activePathLayer;
     if (pathLayer?.path && this.activeTool === 'pen') {
-      const d = pathToSvg(pathLayer.path);
+      const path = pathLayer.path;
+      const d = pathToSvg(path);
       if (d) {
         add('path', {
           d,
@@ -1442,8 +1473,44 @@ export class SuperPhotoEditor {
         });
       }
       const radius = 5 / this.zoom;
-      pathLayer.path.anchors.forEach((anchor, index) => {
-        const selected = drag?.kind === 'pen-anchor' && drag.index === index;
+      const draggingAnchor = drag?.kind === 'pen-anchor';
+      const draggingNew = drag?.kind === 'pen-new-anchor';
+      const last = path.anchors[path.anchors.length - 1];
+
+      // Tracé élastique : on voit la courbe se dessiner avant de cliquer.
+      if (this.penDrawing && !path.closed && this.penHover && last && !draggingAnchor && !draggingNew) {
+        const ghost = `M ${last.x} ${last.y} C ${last.x + last.outX} ${last.y + last.outY}, ${this.penHover.x} ${this.penHover.y}, ${this.penHover.x} ${this.penHover.y}`;
+        add('path', {
+          d: ghost,
+          fill: 'none',
+          class: 'path-rubber',
+          'vector-effect': 'non-scaling-stroke',
+        });
+        add('rect', {
+          x: this.penHover.x - radius * 0.8,
+          y: this.penHover.y - radius * 0.8,
+          width: radius * 1.6,
+          height: radius * 1.6,
+          class: 'path-anchor is-ghost',
+          'vector-effect': 'non-scaling-stroke',
+        });
+      }
+
+      // Anneau de fermeture : le premier point s'entoure quand le clic fermera.
+      const first = path.anchors[0];
+      if (this.penCloseHover && first) {
+        add('circle', {
+          cx: first.x,
+          cy: first.y,
+          r: radius * 1.9,
+          class: 'path-close-ring',
+          'vector-effect': 'non-scaling-stroke',
+        });
+      }
+
+      path.anchors.forEach((anchor, index) => {
+        const selected = draggingAnchor && drag.index === index;
+        const hovered = this.penHoverAnchor === index;
         add('line', {
           x1: anchor.x,
           y1: anchor.y,
@@ -1474,12 +1541,17 @@ export class SuperPhotoEditor {
           class: 'path-handle',
           'vector-effect': 'non-scaling-stroke',
         });
+        const classes = ['path-anchor'];
+        if (selected) classes.push('is-selected');
+        if (hovered) classes.push('is-hovered');
+        // Le premier point est plein : c'est la cible de fermeture.
+        if (index === 0 && !path.closed) classes.push('is-first');
         add('rect', {
           x: anchor.x - radius,
           y: anchor.y - radius,
           width: radius * 2,
           height: radius * 2,
-          class: selected ? 'path-anchor is-selected' : 'path-anchor',
+          class: classes.join(' '),
           'vector-effect': 'non-scaling-stroke',
         });
       });
@@ -1504,25 +1576,31 @@ export class SuperPhotoEditor {
     if (this.gizmoVisible && !this.adjustment && !this.pendingCrop) {
       const box = this.gizmoRect();
       if (box && box.w > 0 && box.h > 0) {
+        const locked = Boolean(this.activeLayer?.locked);
         add('rect', {
           x: box.x,
           y: box.y,
           width: box.w,
           height: box.h,
-          class: 'layer-box',
+          class: locked ? 'layer-box is-locked' : 'layer-box',
           'vector-effect': 'non-scaling-stroke',
         });
-        const size = 8 / this.zoom;
-        const active = this.drag?.kind === 'scale' ? this.drag.handle : null;
-        for (const [handle, x, y] of this.handlePositions(box)) {
-          add('rect', {
-            x: x - size / 2,
-            y: y - size / 2,
-            width: size,
-            height: size,
-            class: `layer-handle${handle === active ? ' is-active' : ''}`,
-            'vector-effect': 'non-scaling-stroke',
-          });
+        // Un calque verrouillé garde son cadre mais perd ses poignées.
+        if (locked) {
+          // rien à dessiner de plus : le cadre suffit à montrer la sélection
+        } else {
+          const size = 8 / this.zoom;
+          const active = this.drag?.kind === 'scale' ? this.drag.handle : null;
+          for (const [handle, x, y] of this.handlePositions(box)) {
+            add('rect', {
+              x: x - size / 2,
+              y: y - size / 2,
+              width: size,
+              height: size,
+              class: `layer-handle${handle === active ? ' is-active' : ''}`,
+              'vector-effect': 'non-scaling-stroke',
+            });
+          }
         }
       }
     }
@@ -1699,6 +1777,7 @@ export class SuperPhotoEditor {
     if (document.activeElement !== opacity && opacity.value !== String(percent)) {
       opacity.value = String(percent);
     }
+    paintRange(opacity);
     const opacityLabel = `${percent} %`;
     if (this.statusCache.get('layer-opacity-value') !== opacityLabel) {
       this.statusCache.set('layer-opacity-value', opacityLabel);
@@ -1724,12 +1803,12 @@ export class SuperPhotoEditor {
     const edit = document.getElementById('layer-mask-edit') as HTMLButtonElement | null;
     if (edit) {
       edit.disabled = !layer?.mask;
-      edit.textContent = layer?.maskEditing ? 'Revenir aux pixels' : 'Peindre le masque';
+      edit.textContent = layer?.maskEditing ? t('layers.backToPixels') : t('layers.paintMask');
     }
     const add = document.getElementById('layer-mask') as HTMLButtonElement | null;
     if (add) {
       add.disabled = !layer;
-      add.title = layer?.mask ? 'Peindre le masque (ou cliquer sur sa vignette)' : 'Ajouter un masque de fusion';
+      add.title = layer?.mask ? t('layers.maskActiveHint') : t('layers.addMask');
     }
     const apply = document.getElementById('layer-mask-apply') as HTMLButtonElement | null;
     if (apply) apply.disabled = !layer?.mask;
@@ -1750,10 +1829,18 @@ export class SuperPhotoEditor {
     eye.className = 'layer-eye';
     eye.dataset.layerAction = 'visibility';
     eye.dataset.state = 'hidden';
+
+    // Vignette des pixels : cliquer dessus revient aux pixels quand on peignait
+    // le masque (geste Photoshop).
+    const pixelSlot = document.createElement('button');
+    pixelSlot.className = 'layer-thumb-slot';
+    pixelSlot.dataset.layerAction = 'pixels';
     const thumb = document.createElement('canvas');
     thumb.className = 'layer-thumb';
     thumb.width = 48;
     thumb.height = 48;
+    pixelSlot.append(thumb);
+
     const maskSlot = document.createElement('button');
     maskSlot.className = 'layer-mask-slot';
     maskSlot.dataset.layerAction = 'mask';
@@ -1763,6 +1850,7 @@ export class SuperPhotoEditor {
     maskThumb.width = 48;
     maskThumb.height = 48;
     maskSlot.append(maskThumb);
+
     const meta = document.createElement('div');
     meta.className = 'layer-meta';
     const name = document.createElement('span');
@@ -1770,7 +1858,12 @@ export class SuperPhotoEditor {
     const kind = document.createElement('span');
     kind.className = 'layer-kind';
     meta.append(name, kind);
-    row.append(eye, thumb, maskSlot, meta);
+
+    const lock = document.createElement('button');
+    lock.className = 'layer-lock';
+    lock.dataset.layerAction = 'lock';
+
+    row.append(eye, pixelSlot, maskSlot, meta, lock);
     return row;
   }
 
@@ -1800,6 +1893,12 @@ export class SuperPhotoEditor {
         this.layerRows.delete(id);
       }
     }
+    // La sélection multiple ne peut pas référencer un calque disparu, et le
+    // calque actif en fait toujours partie.
+    for (const id of [...this.selectedLayerIds]) {
+      if (!alive.has(id)) this.selectedLayerIds.delete(id);
+    }
+    if (doc.activeLayerId && alive.has(doc.activeLayerId)) this.selectedLayerIds.add(doc.activeLayerId);
 
     for (const layer of ordered) {
       let row = this.layerRows.get(layer.id);
@@ -1808,7 +1907,10 @@ export class SuperPhotoEditor {
         this.layerRows.set(layer.id, row);
       }
       row.classList.toggle('is-active', layer.id === doc.activeLayerId);
-      row.setAttribute('aria-selected', String(layer.id === doc.activeLayerId));
+      row.classList.toggle('is-selected', this.selectedLayerIds.has(layer.id));
+      row.classList.toggle('is-locked', Boolean(layer.locked));
+      row.classList.toggle('is-hidden-layer', !layer.visible);
+      row.setAttribute('aria-selected', String(this.selectedLayerIds.has(layer.id)));
 
       const eye = row.querySelector<HTMLButtonElement>('.layer-eye');
       if (eye) {
@@ -1822,6 +1924,17 @@ export class SuperPhotoEditor {
         }
       }
 
+      const lock = row.querySelector<HTMLButtonElement>('.layer-lock');
+      if (lock) {
+        const state = layer.locked ? 'locked' : 'unlocked';
+        if (lock.dataset.state !== state) {
+          lock.dataset.state = state;
+          lock.innerHTML = icon(layer.locked ? 'lock' : 'unlock');
+          lock.title = layer.locked ? t('layers.unlock') : t('layers.lock');
+          lock.setAttribute('aria-label', lock.title);
+        }
+      }
+
       const name = row.querySelector<HTMLElement>('.layer-name');
       if (name && name.textContent !== layer.name) {
         name.textContent = layer.name;
@@ -1830,6 +1943,15 @@ export class SuperPhotoEditor {
       const kind = row.querySelector<HTMLElement>('.layer-kind');
       const kindText = `${kindLabel(layer.kind)} · ${Math.round(layer.opacity * 100)} %`;
       if (kind && kind.textContent !== kindText) kind.textContent = kindText;
+
+      const pixelSlot = row.querySelector<HTMLElement>('.layer-thumb-slot');
+      if (pixelSlot) {
+        pixelSlot.classList.toggle('is-editing', !(layer.mask && layer.maskEditing));
+        pixelSlot.title = layer.mask && layer.maskEditing
+          ? t('layers.pixelsHint')
+          : `${layer.name} · ${t('layers.pixelsActive')}`;
+        pixelSlot.setAttribute('aria-label', pixelSlot.title);
+      }
 
       const slot = row.querySelector<HTMLElement>('.layer-mask-slot');
       const maskThumb = row.querySelector<HTMLCanvasElement>('.layer-mask-thumb');
@@ -1842,10 +1964,10 @@ export class SuperPhotoEditor {
           slot.classList.toggle('is-disabled', layer.maskEnabled === false);
           slot.title =
             layer.maskEnabled === false
-              ? t('msg.maskOff')
+              ? t('layers.maskOffHint')
               : layer.maskEditing
-                ? 'Vous peignez le masque — cliquer pour revenir aux pixels'
-                : 'Cliquer pour peindre le masque';
+                ? t('layers.maskEditingHint')
+                : t('layers.maskHintShort');
           slot.setAttribute('aria-label', slot.title);
         }
       }
@@ -1968,6 +2090,12 @@ export class SuperPhotoEditor {
       this.updateStatus();
       return;
     }
+    // Quitter la plume termine proprement le tracé en cours.
+    if (this.activeTool === 'pen' && tool !== 'pen' && this.penDrawing) this.commitPenPath();
+    this.penDrawing = false;
+    this.penHover = null;
+    this.penCloseHover = false;
+    this.penHoverAnchor = -1;
     this.activeTool = tool;
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
       button.classList.toggle('is-active', button.dataset.tool === tool);
@@ -2274,7 +2402,8 @@ export class SuperPhotoEditor {
     return `
       <div class="button-row">
         <button class="btn primary sm" data-action="new-path">${escapeHtml(t('opt.newPath'))}</button>
-        <button class="btn ghost sm" data-action="close-path" ${path && path.anchors.length > 1 ? '' : 'disabled'}>${escapeHtml(t('opt.closePath'))}</button>
+        <button class="btn ghost sm" data-action="finish-path" ${path && path.anchors.length > 0 ? '' : 'disabled'}>${escapeHtml(t('opt.finishPath'))}</button>
+        <button class="btn ghost sm" data-action="close-path" ${path && path.anchors.length > 1 && !path.closed ? '' : 'disabled'}>${escapeHtml(t('opt.closePath'))}</button>
         <button class="btn ghost sm" data-action="delete-anchor" ${path && path.anchors.length > 0 ? '' : 'disabled'}>${escapeHtml(t('opt.deleteAnchor'))}</button>
       </div>
       <div class="dual-colors">
@@ -2444,13 +2573,7 @@ export class SuperPhotoEditor {
   }
 
   private syncRangeFills(): void {
-    for (const input of this.toolOptions.querySelectorAll<HTMLInputElement>('input[type="range"]')) {
-      const min = Number(input.min) || 0;
-      const max = Number(input.max) || 100;
-      const value = Number(input.value) || 0;
-      const ratio = max === min ? 0 : (value - min) / (max - min);
-      input.style.setProperty('--fill', `${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`);
-    }
+    paintRanges(document);
   }
 
   private bindTopbar(): void {
@@ -3466,7 +3589,13 @@ export class SuperPhotoEditor {
         }
         break;
       case 'new-path':
+        this.penDrawing = false;
+        this.penHover = null;
         this.createPathLayer();
+        this.penDrawing = true;
+        break;
+      case 'finish-path':
+        this.commitPenPath();
         break;
       case 'clear-patch':
         this.patchSourceRect = null;
@@ -3547,12 +3676,17 @@ export class SuperPhotoEditor {
 
   private bindLayersPanel(): void {
     this.layersList.addEventListener('click', (event) => {
+      if (this.layerDragJustEnded) {
+        this.layerDragJustEnded = false;
+        return;
+      }
       const target = event.target as HTMLElement;
       const row = target.closest<HTMLElement>('[data-layer-id]');
       if (!row) return;
       const layerId = row.dataset.layerId;
       if (!layerId || !this.doc) return;
       const action = target.closest<HTMLElement>('[data-layer-action]')?.dataset.layerAction;
+
       if (action === 'visibility') {
         const layer = this.doc.layers.find((item) => item.id === layerId);
         if (!layer) return;
@@ -3573,10 +3707,52 @@ export class SuperPhotoEditor {
         this.renderAll();
         return;
       }
+
+      if (action === 'lock') {
+        const layer = this.doc.layers.find((item) => item.id === layerId);
+        if (!layer) return;
+        this.toggleLayerLock(layer);
+        return;
+      }
+
+      if (action === 'pixels') {
+        const layer = this.doc.layers.find((item) => item.id === layerId);
+        if (!layer) return;
+        if (this.doc.activeLayerId !== layerId) this.selectLayer(layerId);
+        if (!layer.maskEditing) return;
+        layer.maskEditing = false;
+        this.layersDirty = true;
+        this.renderAll();
+        this.renderToolOptions();
+        this.setMessage(t('msg.pixelsEditing'));
+        return;
+      }
+
       if (action === 'mask') {
         const layer = this.doc.layers.find((item) => item.id === layerId);
         if (!layer) return;
         if (this.doc.activeLayerId !== layerId) this.selectLayer(layerId);
+        // Maj + clic sur la vignette du masque : active / désactive le masque
+        // sans le supprimer (geste Photoshop).
+        if (event.shiftKey) {
+          const before = layer.maskEnabled !== false;
+          layer.maskEnabled = !before;
+          this.history.push({
+            label: before ? t('msg.maskDisable') : t('msg.maskEnable'),
+            undo: () => {
+              layer.maskEnabled = before;
+              this.renderAll();
+            },
+            redo: () => {
+              layer.maskEnabled = !before;
+              this.renderAll();
+            },
+          });
+          this.layersDirty = true;
+          this.renderAll();
+          this.setMessage(layer.maskEnabled ? t('msg.maskOn') : t('msg.maskOff'));
+          return;
+        }
         if (layer.maskEnabled === false) {
           layer.maskEnabled = true;
           this.layersDirty = true;
@@ -3588,11 +3764,15 @@ export class SuperPhotoEditor {
         this.layersDirty = true;
         this.renderAll();
         this.renderToolOptions();
-        this.setMessage(layer.maskEditing ? 'Vous peignez le masque' : 'Vous peignez les pixels');
+        this.setMessage(layer.maskEditing ? t('msg.maskEditing') : t('msg.pixelsEditing'));
         return;
       }
-      this.selectLayer(layerId);
+
+      this.selectLayer(layerId, event.shiftKey || event.metaKey || event.ctrlKey);
+      row.focus({ preventScroll: true });
     });
+
+    this.bindLayerDrag();
 
     this.layersList.addEventListener('dblclick', (event) => {
       const row = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id]');
@@ -3610,35 +3790,50 @@ export class SuperPhotoEditor {
 
     const opacity = byId<HTMLInputElement>('layer-opacity');
     const rememberOpacity = () => {
-      const layer = this.activeLayer;
-      if (layer) this.layerPropBefore = layer.opacity;
+      const layers = this.selectedLayers();
+      if (layers.length === 0 && this.activeLayer) layers.push(this.activeLayer);
+      this.layerPropBefore = layers.length > 0 ? layers[0]!.opacity : null;
+      this.layerPropBeforeAll = new Map(layers.map((item) => [item.id, item.opacity]));
     };
     opacity.addEventListener('pointerdown', rememberOpacity);
     opacity.addEventListener('focus', rememberOpacity);
     opacity.addEventListener('input', () => {
-      const layer = this.activeLayer;
-      if (!layer) return;
-      layer.opacity = clamp(Number(opacity.value) / 100, 0, 1);
-      this.setText('layer-opacity-value', `${Math.round(layer.opacity * 100)} %`);
+      const value = clamp(Number(opacity.value) / 100, 0, 1);
+      const primary = this.activeLayer;
+      if (!primary) return;
+      // L'opacité s'applique à toute la sélection, comme dans Photoshop.
+      const selected = this.selectedLayers();
+      const targets = selected.length > 0 ? selected : [primary];
+      for (const item of targets) item.opacity = value;
+      this.setText('layer-opacity-value', `${Math.round(value * 100)} %`);
+      paintRange(opacity);
       this.renderCanvas();
       this.layersDirty = true;
       this.requestFrame();
     });
     opacity.addEventListener('change', () => {
-      const layer = this.activeLayer;
-      if (!layer || this.layerPropBefore === null) return;
+      const primary = this.activeLayer;
+      if (!primary || this.layerPropBefore === null) return;
       const before = this.layerPropBefore;
-      const after = layer.opacity;
+      const after = primary.opacity;
+      const snapshot = this.layerPropBeforeAll ?? new Map([[primary.id, before]]);
       this.layerPropBefore = null;
+      this.layerPropBeforeAll = null;
       if (Math.abs(before - after) < 0.001) return;
       this.history.push({
         label: t('msg.layerOpacity'),
         undo: () => {
-          layer.opacity = before;
+          for (const [id, value] of snapshot) {
+            const item = this.doc?.layers.find((entry) => entry.id === id);
+            if (item) item.opacity = value;
+          }
           this.renderAll();
         },
         redo: () => {
-          layer.opacity = after;
+          for (const id of snapshot.keys()) {
+            const item = this.doc?.layers.find((entry) => entry.id === id);
+            if (item) item.opacity = after;
+          }
           this.renderAll();
         },
       });
@@ -3741,6 +3936,168 @@ export class SuperPhotoEditor {
     byId<HTMLButtonElement>('layer-mask-delete').addEventListener('click', () => this.deleteActiveMask());
   }
 
+  /**
+   * Réordonnancement à la souris. Le glissement est piloté au pointeur (et non
+   * par le glisser-déposer HTML) : on obtient un indicateur d'insertion net, un
+   * rendu immédiat et un seul pas d'historique.
+   */
+  private bindLayerDrag(): void {
+    const indicator = document.createElement('div');
+    indicator.className = 'layer-drop-indicator';
+    indicator.hidden = true;
+
+    const rowIndexAt = (clientY: number): number => {
+      const rows = [...this.layersList.querySelectorAll<HTMLElement>('[data-layer-id]')];
+      for (let i = 0; i < rows.length; i += 1) {
+        const rect = rows[i]!.getBoundingClientRect();
+        if (clientY < rect.top + rect.height / 2) return i;
+      }
+      return rows.length;
+    };
+
+    const showIndicator = (index: number): void => {
+      const rows = [...this.layersList.querySelectorAll<HTMLElement>('[data-layer-id]')];
+      if (rows.length === 0) return;
+      if (!indicator.isConnected) this.layersList.appendChild(indicator);
+      indicator.hidden = false;
+      const listRect = this.layersList.getBoundingClientRect();
+      let top: number;
+      if (index >= rows.length) {
+        const last = rows[rows.length - 1]!.getBoundingClientRect();
+        top = last.bottom - listRect.top + this.layersList.scrollTop;
+      } else {
+        const rect = rows[index]!.getBoundingClientRect();
+        top = rect.top - listRect.top + this.layersList.scrollTop;
+      }
+      indicator.style.top = `${Math.round(top)}px`;
+    };
+
+    const stop = (): void => {
+      indicator.hidden = true;
+      for (const row of this.layersList.querySelectorAll('.is-dragging')) row.classList.remove('is-dragging');
+      this.layersList.classList.remove('is-dragging-layers');
+      this.layerDrag = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+
+    const onMove = (event: PointerEvent): void => {
+      const drag = this.layerDrag;
+      if (!drag || drag.ids.length === 0) return;
+      if (!drag.active) {
+        if (Math.abs(event.clientY - drag.startY) < 5) return;
+        drag.active = true;
+        this.layersList.classList.add('is-dragging-layers');
+        for (const id of drag.ids) this.layerRows.get(id)?.classList.add('is-dragging');
+      }
+      drag.target = rowIndexAt(event.clientY);
+      showIndicator(drag.target);
+    };
+
+    const onCancel = (): void => {
+      stop();
+    };
+
+    const onUp = (): void => {
+      const drag = this.layerDrag;
+      if (!drag) return;
+      const wasActive = drag.active;
+      const ids = drag.ids;
+      const targetIndex = drag.target;
+      stop();
+      if (!wasActive || targetIndex < 0 || ids.length === 0) return;
+      // Le clic qui suit le relâchement ne doit pas changer la sélection.
+      this.layerDragJustEnded = true;
+      window.setTimeout(() => {
+        this.layerDragJustEnded = false;
+      }, 60);
+      this.reorderLayersTo(ids, targetIndex);
+    };
+
+    this.layersList.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || !this.doc) return;
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-layer-action]')) return;
+      const row = target.closest<HTMLElement>('[data-layer-id]');
+      const id = row?.dataset.layerId;
+      if (!row || !id) return;
+      const layer = this.doc.layers.find((item) => item.id === id);
+      if (!layer) return;
+      // Un calque verrouillé ne bouge pas, mais reste sélectionnable.
+      const group = this.selectedLayerIds.has(id) && this.selectedLayerIds.size > 1
+        ? this.selectedLayers()
+        : [layer];
+      this.layerDrag = {
+        ids: layer.locked ? [] : group.map((item) => item.id),
+        startY: event.clientY,
+        active: false,
+        target: -1,
+        indicator,
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
+    });
+  }
+
+  /**
+   * Place les calques `ids` à la position visuelle `visualIndex` (0 = tout en
+   * haut de la pile, comme à l'écran).
+   */
+  private reorderLayersTo(ids: string[], visualIndex: number): void {
+    const doc = this.doc;
+    if (!doc) return;
+    const before = doc.layers.map((item) => item.id);
+    const moving = new Set(ids);
+    const visual = [...doc.layers].reverse();
+    const block = visual.filter((item) => moving.has(item.id));
+    if (block.length === 0) return;
+    const rest = visual.filter((item) => !moving.has(item.id));
+    // L'indicateur est dessiné avant la ligne `visualIndex` : on retire donc du
+    // décompte les calques déplacés qui se trouvaient déjà au-dessus.
+    const above = visual
+      .map((item, index) => (moving.has(item.id) ? index : -1))
+      .filter((index) => index >= 0 && index < visualIndex).length;
+    const insertAt = clamp(visualIndex - above, 0, rest.length);
+    const nextVisual = [...rest.slice(0, insertAt), ...block, ...rest.slice(insertAt)];
+    const next = [...nextVisual].reverse();
+    doc.layers = next;
+    const after = next.map((item) => item.id);
+    if (before.join('|') === after.join('|')) return;
+    this.history.push({
+      label: t('msg.layerReorder'),
+      undo: () => {
+        this.reorderTo(before);
+        this.renderAll();
+      },
+      redo: () => {
+        this.reorderTo(after);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+  }
+
+  private toggleLayerLock(layer: Layer): void {
+    const before = Boolean(layer.locked);
+    layer.locked = !before;
+    this.history.push({
+      label: before ? t('layers.unlock') : t('layers.lock'),
+      undo: () => {
+        layer.locked = before;
+        this.renderAll();
+      },
+      redo: () => {
+        layer.locked = !before;
+        this.renderAll();
+      },
+    });
+    this.renderAll();
+    this.setMessage(layer.locked ? t('msg.layerLocked', { name: layer.name }) : t('msg.layerUnlocked', { name: layer.name }));
+  }
+
   private toggleMaskForActiveLayer(): void {
     const doc = this.doc;
     const layer = this.activeLayer;
@@ -3750,7 +4107,7 @@ export class SuperPhotoEditor {
       this.layersDirty = true;
       this.renderAll();
       this.renderToolOptions();
-      this.setMessage(layer.maskEditing ? 'Vous peignez le masque' : 'Vous peignez les pixels');
+      this.setMessage(layer.maskEditing ? t('msg.maskEditing') : t('msg.pixelsEditing'));
       return;
     }
     if (this.adjustment) this.cancelAdjustment();
@@ -3839,15 +4196,55 @@ export class SuperPhotoEditor {
     this.setMessage(t('msg.maskDeleted'));
   }
 
-  private selectLayer(layerId: string): void {
+  private selectLayer(layerId: string, additive = false): void {
     if (!this.doc) return;
-    if (this.doc.activeLayerId === layerId) return;
     if (this.adjustment) this.cancelAdjustment();
+    // Maj / Ctrl + clic : on ajoute ou on retire de la sélection multiple.
+    if (additive) {
+      if (this.selectedLayerIds.has(layerId)) {
+        // On ne retire pas le dernier calque sélectionné : il faut toujours une
+        // cible aux outils.
+        if (this.selectedLayerIds.size > 1) {
+          this.selectedLayerIds.delete(layerId);
+          const next = [...this.selectedLayerIds].pop();
+          if (this.doc.activeLayerId === layerId && next) this.doc.activeLayerId = next;
+        }
+      } else {
+        this.selectedLayerIds.add(layerId);
+        this.doc.activeLayerId = layerId;
+      }
+      this.renderLayers();
+      this.renderToolOptions();
+      this.renderOverlay();
+      this.updateStatus();
+      return;
+    }
+    this.selectedLayerIds = new Set([layerId]);
+    if (this.doc.activeLayerId === layerId) {
+      this.renderLayers();
+      this.renderOverlay();
+      this.updateStatus();
+      return;
+    }
     this.doc.activeLayerId = layerId;
     this.renderLayers();
     this.renderToolOptions();
     this.renderOverlay();
     this.updateStatus();
+  }
+
+  /** Calques sélectionnés, dans l'ordre du document (bas → haut). */
+  private selectedLayers(): Layer[] {
+    const doc = this.doc;
+    if (!doc) return [];
+    return doc.layers.filter((layer) => this.selectedLayerIds.has(layer.id));
+  }
+
+  /** Un calque verrouillé refuse les modifications de pixels et de position. */
+  private layerLocked(layer: Layer | null | undefined): boolean {
+    if (!layer?.locked) return false;
+    this.toast(t('msg.layerIsLocked', { name: layer.name }), 'info');
+    return true;
   }
 
   private addNewLayer(): void {
@@ -3884,28 +4281,44 @@ export class SuperPhotoEditor {
     const layer = this.activeLayer;
     if (!doc || !layer) return;
     if (this.adjustment) this.cancelAdjustment();
-    const index = doc.layers.findIndex((item) => item.id === layer.id);
-    const insertAt = index + 1;
-    const copy = duplicateLayer(layer);
-    doc.layers.splice(insertAt, 0, copy);
-    doc.activeLayerId = copy.id;
+    const targets = this.selectedLayers().length > 1 ? this.selectedLayers() : [layer];
+    // On duplique de haut en bas pour que les copies gardent leur ordre relatif.
+    const ordered = [...targets].reverse();
+    const copies: Array<{ copy: Layer; at: number }> = [];
+    for (const source of ordered) {
+      const index = doc.layers.findIndex((item) => item.id === source.id);
+      if (index < 0) continue;
+      const copy = duplicateLayer(source);
+      doc.layers.splice(index + 1, 0, copy);
+      copies.push({ copy, at: index + 1 });
+    }
+    if (copies.length === 0) return;
+    const newActive = [...copies].reverse()[0]?.copy.id ?? layer.id;
+    doc.activeLayerId = newActive;
+    this.selectedLayerIds = new Set(copies.map((item) => item.copy.id));
     this.history.push({
       label: t('layers.duplicate'),
       undo: () => {
-        const current = doc.layers.findIndex((item) => item.id === copy.id);
-        if (current >= 0) doc.layers.splice(current, 1);
+        for (const { copy } of [...copies].reverse()) {
+          const current = doc.layers.findIndex((item) => item.id === copy.id);
+          if (current >= 0) doc.layers.splice(current, 1);
+        }
         doc.activeLayerId = layer.id;
+        this.selectedLayerIds = new Set([layer.id]);
         this.renderAll();
       },
       redo: () => {
-        doc.layers.splice(Math.min(insertAt, doc.layers.length), 0, copy);
-        doc.activeLayerId = copy.id;
+        for (const { copy, at } of copies) {
+          doc.layers.splice(Math.min(at, doc.layers.length), 0, copy);
+        }
+        doc.activeLayerId = newActive;
+        this.selectedLayerIds = new Set(copies.map((item) => item.copy.id));
         this.renderAll();
       },
     });
     this.layersDirty = true;
     this.renderAll();
-    this.setMessage(t('msg.layerDuplicated'));
+    this.setMessage(copies.length > 1 ? t('msg.layersDuplicated', { n: copies.length }) : t('msg.layerDuplicated'));
   }
 
   private deleteActiveLayer(): void {
@@ -3913,26 +4326,49 @@ export class SuperPhotoEditor {
     const layer = this.activeLayer;
     if (!doc || !layer) return;
     if (this.adjustment) this.cancelAdjustment();
-    if (doc.layers.length <= 1) {
+    const targets = this.selectedLayers().length > 1 ? this.selectedLayers() : [layer];
+    if (targets.length >= doc.layers.length) {
       this.toast(t('msg.lastLayer'), 'error');
       return;
     }
-    const index = doc.layers.findIndex((item) => item.id === layer.id);
-    doc.layers.splice(index, 1);
-    const next = doc.layers[Math.min(index, doc.layers.length - 1)];
+    const locked = targets.filter((item) => item.locked);
+    if (locked.length > 0) {
+      this.toast(t('msg.layerIsLocked', { name: locked[0]?.name ?? '' }), 'info');
+      return;
+    }
+    const removed = targets.map((item) => ({
+      layer: item,
+      at: doc.layers.findIndex((entry) => entry.id === item.id),
+    })).filter((item) => item.at >= 0).sort((a, b) => b.at - a.at);
+    if (removed.length === 0) return;
+    const firstIndex = Math.min(...removed.map((item) => item.at));
+    const previousActive = doc.activeLayerId;
+    const previousSelection = new Set(this.selectedLayerIds);
+    for (const { layer: item } of removed) {
+      const current = doc.layers.findIndex((entry) => entry.id === item.id);
+      if (current >= 0) doc.layers.splice(current, 1);
+    }
+    const next = doc.layers[Math.min(firstIndex, doc.layers.length - 1)];
     doc.activeLayerId = next?.id ?? '';
+    this.selectedLayerIds = new Set(next ? [next.id] : []);
     this.history.push({
-      label: t('msg.layerDeleteLabel'),
+      label: removed.length > 1 ? t('msg.layersDeleteLabel', { n: removed.length }) : t('msg.layerDeleteLabel'),
       undo: () => {
-        doc.layers.splice(Math.min(index, doc.layers.length), 0, layer);
-        doc.activeLayerId = layer.id;
+        for (const { layer: item, at } of [...removed].reverse()) {
+          doc.layers.splice(Math.min(at, doc.layers.length), 0, item);
+        }
+        doc.activeLayerId = previousActive;
+        this.selectedLayerIds = previousSelection;
         this.renderAll();
       },
       redo: () => {
-        const current = doc.layers.findIndex((item) => item.id === layer.id);
-        if (current >= 0) doc.layers.splice(current, 1);
-        const fallback = doc.layers[Math.min(index, doc.layers.length - 1)];
+        for (const { layer: item } of removed) {
+          const current = doc.layers.findIndex((entry) => entry.id === item.id);
+          if (current >= 0) doc.layers.splice(current, 1);
+        }
+        const fallback = doc.layers[Math.min(firstIndex, doc.layers.length - 1)];
         doc.activeLayerId = fallback?.id ?? '';
+        this.selectedLayerIds = new Set(fallback ? [fallback.id] : []);
         this.renderAll();
       },
     });
@@ -3943,29 +4379,60 @@ export class SuperPhotoEditor {
 
   private moveActiveLayer(delta: number): void {
     const doc = this.doc;
-    const layer = this.activeLayer;
-    if (!doc || !layer) return;
+    if (!doc) return;
+    const targets = this.selectedLayers().length > 0 ? this.selectedLayers() : [this.activeLayer].filter(Boolean) as Layer[];
+    if (targets.length === 0) return;
     if (this.adjustment) this.cancelAdjustment();
-    const index = doc.layers.findIndex((item) => item.id === layer.id);
-    const nextIndex = clamp(index + delta, 0, doc.layers.length - 1);
-    if (nextIndex === index) return;
-    doc.layers.splice(index, 1);
-    doc.layers.splice(nextIndex, 0, layer);
+    if (targets.some((item) => item.locked)) {
+      this.toast(t('msg.lockedNoMove'), 'info');
+      return;
+    }
+    // On part du haut quand on monte, du bas quand on descend : les calques
+    // sélectionnés ne se chevauchent jamais en cours de route.
+    const list = delta > 0 ? [...targets].reverse() : targets;
+    const before = doc.layers.map((item) => item.id);
+    let moved = false;
+    for (const layer of list) {
+      const index = doc.layers.findIndex((item) => item.id === layer.id);
+      const nextIndex = clamp(index + delta, 0, doc.layers.length - 1);
+      if (index < 0 || nextIndex === index) continue;
+      doc.layers.splice(index, 1);
+      doc.layers.splice(nextIndex, 0, layer);
+      moved = true;
+    }
+    if (!moved) return;
+    const after = doc.layers.map((item) => item.id);
     this.history.push({
       label: t('msg.layerReorder'),
       undo: () => {
-        doc.layers.splice(nextIndex, 1);
-        doc.layers.splice(index, 0, layer);
+        this.reorderTo(before);
         this.renderAll();
       },
       redo: () => {
-        doc.layers.splice(index, 1);
-        doc.layers.splice(nextIndex, 0, layer);
+        this.reorderTo(after);
         this.renderAll();
       },
     });
     this.layersDirty = true;
     this.renderAll();
+  }
+
+  /** Réapplique un ordre mémorisé (identifiants) au document. */
+  private reorderTo(order: string[]): void {
+    const doc = this.doc;
+    if (!doc) return;
+    const byId = new Map(doc.layers.map((layer) => [layer.id, layer]));
+    const next: Layer[] = [];
+    for (const id of order) {
+      const layer = byId.get(id);
+      if (layer) {
+        next.push(layer);
+        byId.delete(id);
+      }
+    }
+    // Les calques apparus entre-temps restent en haut.
+    for (const layer of byId.values()) next.push(layer);
+    doc.layers = next;
   }
 
   /** Sélectionne le calque voisin (Alt + [ / Alt + ]). */
@@ -3981,6 +4448,7 @@ export class SuperPhotoEditor {
   private clearActiveLayerContent(): void {
     const layer = this.activeLayer;
     if (!layer) return;
+    if (this.layerLocked(layer)) return;
     const before = cloneCanvas(layer.canvas);
     const ctx = canvasContext(layer.canvas);
     ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
@@ -4018,6 +4486,7 @@ export class SuperPhotoEditor {
       this.toast(t('msg.mergeNeedsTwo'), 'info');
       return;
     }
+    if (this.layerLocked(layer) || this.layerLocked(below)) return;
     const belowBefore = cloneCanvas(below.canvas);
     const belowProps = { opacity: below.opacity, blend: below.blend, kind: below.kind, text: below.text, path: below.path };
     const ctx = canvasContext(below.canvas);
@@ -4086,6 +4555,7 @@ export class SuperPhotoEditor {
   private nudgeActiveLayer(dx: number, dy: number): void {
     const layer = this.activeLayer;
     if (!layer) return;
+    if (this.layerLocked(layer)) return;
     if (this.nudge && this.nudge.layerId !== layer.id) this.commitNudge();
     if (!this.nudge) {
       const raster = layer.kind !== 'text' && layer.kind !== 'path';
@@ -4211,6 +4681,7 @@ export class SuperPhotoEditor {
       this.toast(t('msg.selectLayer'), 'error');
       return;
     }
+    if (this.layerLocked(layer)) return;
     if (this.adjustment) this.cancelAdjustment();
     this.pendingCrop = null;
     this.renderOverlay();
@@ -5209,7 +5680,7 @@ export class SuperPhotoEditor {
         const layer = this.activeLayer;
         const box = this.gizmoRect();
         // 1. Une poignée : on redimensionne le contenu du calque actif.
-        const handle = layer && box ? this.handleAt(point, box) : null;
+        const handle = layer && !layer.locked && box ? this.handleAt(point, box) : null;
         if (layer && box && handle) {
           this.drag = {
             kind: 'scale',
@@ -5232,6 +5703,11 @@ export class SuperPhotoEditor {
         const target = hit ?? (layer && box && pointInRect(point.x, point.y, box) ? layer : null);
         if (!target) break;
         if (this.doc && this.doc.activeLayerId !== target.id) this.selectLayer(target.id);
+        // Un calque verrouillé reste sélectionnable mais ne bouge pas.
+        if (target.locked) {
+          this.setMessage(t('msg.layerIsLocked', { name: target.name }));
+          break;
+        }
         const bounds = this.layerBounds(target);
         this.drag = {
           kind: 'move',
@@ -5300,7 +5776,7 @@ export class SuperPhotoEditor {
         this.zoomAtPoint(event.altKey ? 0.8 : 1.25, event.clientX, event.clientY);
         break;
       case 'pen':
-        this.onPenDown(point, event.shiftKey);
+        this.onPenDown(point, event.shiftKey, event.altKey);
         break;
       case 'text':
         this.onTextDown(point);
@@ -5348,6 +5824,7 @@ export class SuperPhotoEditor {
     const drag = this.drag;
     if (!drag) {
       if (this.activeTool === 'spotlight') this.renderOverlay();
+      if (this.activeTool === 'pen') this.updatePenHover(event);
       this.updateCanvasCursor();
       this.updateStatus();
       return;
@@ -5765,6 +6242,7 @@ export class SuperPhotoEditor {
   } | null {
     const layer = this.activeLayer;
     if (!layer) return null;
+    if (this.layerLocked(layer)) return null;
     if (layer.mask && layer.maskEditing) return { layer, canvas: layer.mask, isMask: true };
     if (layer.kind !== 'raster') {
       // Peindre un texte ou un tracé le rasterise : les métadonnées éditables
@@ -6711,72 +7189,312 @@ export class SuperPhotoEditor {
     return layer;
   }
 
-  private onPenDown(point: Point, shift: boolean): void {
-    let layer = this.activePathLayer;
-    if (!layer) layer = this.createPathLayer();
-    if (!layer?.path) return;
-    const path = layer.path;
-    const threshold = 10 / this.zoom;
+  /** Un tracé est en cours de dessin (entre le premier clic et Entrée / Échap). */
+  private penDrawing = false;
 
+  /** Tolérance de saisie, constante à l'écran quel que soit le zoom. */
+  private penTolerance(): number {
+    return 9 / this.zoom;
+  }
+
+  /** Ancre ou poignée sous le curseur (les poignées sont prioritaires). */
+  private penHit(point: Point): { kind: 'anchor' | 'hIn' | 'hOut'; index: number } | null {
+    const path = this.activePathLayer?.path;
+    if (!path) return null;
+    const tolerance = this.penTolerance();
+    let bestKind: 'anchor' | 'hIn' | 'hOut' | null = null;
+    let bestIndex = -1;
+    let bestDistance = Infinity;
     for (let index = 0; index < path.anchors.length; index += 1) {
       const anchor = path.anchors[index];
       if (!anchor) continue;
-      if (index === 0 && !path.closed && path.anchors.length >= 2 && Math.hypot(point.x - anchor.x, point.y - anchor.y) < threshold) {
+      const candidates: Array<{ kind: 'anchor' | 'hIn' | 'hOut'; x: number; y: number; skip: boolean }> = [
+        { kind: 'hIn', x: anchor.x + anchor.inX, y: anchor.y + anchor.inY, skip: !anchor.inX && !anchor.inY },
+        { kind: 'hOut', x: anchor.x + anchor.outX, y: anchor.y + anchor.outY, skip: !anchor.outX && !anchor.outY },
+        { kind: 'anchor', x: anchor.x, y: anchor.y, skip: false },
+      ];
+      for (const candidate of candidates) {
+        if (candidate.skip) continue;
+        const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+        if (distance > tolerance || distance >= bestDistance) continue;
+        bestDistance = distance;
+        bestKind = candidate.kind;
+        bestIndex = index;
+      }
+    }
+    return bestKind ? { kind: bestKind, index: bestIndex } : null;
+  }
+
+  /** Point d'un segment de Bézier (t ∈ [0,1]), dans l'espace du document. */
+  private bezierPoint(a: Anchor, b: Anchor, t: number): Point {
+    const p0 = { x: a.x, y: a.y };
+    const p1 = { x: a.x + a.outX, y: a.y + a.outY };
+    const p2 = { x: b.x + b.inX, y: b.y + b.inY };
+    const p3 = { x: b.x, y: b.y };
+    const u = 1 - t;
+    return {
+      x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+      y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+    };
+  }
+
+  /** Segment sous le curseur, uniquement sur un tracé fermé (insertion de point). */
+  private penSegmentHit(point: Point): { index: number; t: number } | null {
+    const path = this.activePathLayer?.path;
+    if (!path || !path.closed || path.anchors.length < 2) return null;
+    const tolerance = 8 / this.zoom;
+    const count = path.anchors.length;
+    let best: { index: number; t: number; distance: number } | null = null;
+    for (let index = 0; index < count; index += 1) {
+      const a = path.anchors[index];
+      const b = path.anchors[(index + 1) % count];
+      if (!a || !b) continue;
+      for (let step = 1; step < 24; step += 1) {
+        const t = step / 24;
+        const p = this.bezierPoint(a, b, t);
+        const distance = Math.hypot(point.x - p.x, point.y - p.y);
+        if (distance > tolerance) continue;
+        if (best && distance >= best.distance) continue;
+        best = { index, t, distance };
+      }
+    }
+    return best ? { index: best.index, t: best.t } : null;
+  }
+
+  private onPenDown(point: Point, shift: boolean, alt: boolean): void {
+    const hit = this.penHit(point);
+    const path = this.activePathLayer?.path;
+    const now = performance.now();
+    const doubleClick = now - this.penLastClick.at < 320;
+
+    // 1. Une poignée : on la tire (Alt détache les deux poignées).
+    if (hit && hit.kind !== 'anchor' && path) {
+      this.drag = {
+        kind: 'pen-handle',
+        layerId: this.activeLayer?.id ?? '',
+        index: hit.index,
+        which: hit.kind === 'hIn' ? 'in' : 'out',
+        before: deepClone(path),
+      };
+      return;
+    }
+
+    // 2. Une ancre : on la déplace, on ferme le tracé si c'est la première, et
+    //    un double-clic la transforme en angle ou en courbe lissée.
+    if (hit && hit.kind === 'anchor' && path) {
+      const anchor = path.anchors[hit.index];
+      if (!anchor) return;
+      const isFirst = hit.index === 0;
+      if (isFirst && !path.closed && path.anchors.length >= 2 && this.penDrawing) {
         this.closeActivePath();
         return;
       }
-      if (Math.hypot(point.x - anchor.x, point.y - anchor.y) < threshold) {
-        this.drag = {
-          kind: 'pen-anchor',
-          layerId: layer.id,
-          index,
-          before: deepClone(path),
-          beforePoint: { x: anchor.x, y: anchor.y },
-        };
+      if (doubleClick && this.penLastClick.index === hit.index) {
+        this.penLastClick = { at: 0, index: -1 };
+        this.toggleAnchorSmooth(hit.index);
         return;
       }
-      if (Math.hypot(point.x - (anchor.x + anchor.outX), point.y - (anchor.y + anchor.outY)) < threshold) {
-        this.drag = { kind: 'pen-handle', layerId: layer.id, index, which: 'out', before: deepClone(path) };
+      if (alt) {
+        this.penLastClick = { at: 0, index: -1 };
+        this.toggleAnchorSmooth(hit.index);
         return;
       }
-      if (Math.hypot(point.x - (anchor.x + anchor.inX), point.y - (anchor.y + anchor.inY)) < threshold) {
-        this.drag = { kind: 'pen-handle', layerId: layer.id, index, which: 'in', before: deepClone(path) };
+      this.penLastClick = { at: now, index: hit.index };
+      // Toucher une ancre d'un tracé terminé le rouvre pour édition.
+      this.penDrawing = true;
+      this.drag = {
+        kind: 'pen-anchor',
+        layerId: this.activeLayer?.id ?? '',
+        index: hit.index,
+        before: deepClone(path),
+        beforePoint: { x: anchor.x, y: anchor.y },
+      };
+      return;
+    }
+
+    // 3. Sur un segment d'un tracé fermé : on insère un point (Figma).
+    if (path?.closed) {
+      const segment = this.penSegmentHit(point);
+      if (segment) {
+        this.insertAnchor(segment.index, segment.t);
         return;
       }
     }
 
-    if (path.closed) {
+    // 4. Sinon : nouveau point. On démarre un calque de tracé si nécessaire.
+    let layer = this.penDrawing ? this.activePathLayer : null;
+    if (!layer) layer = this.createPathLayer();
+    if (!layer?.path) return;
+    this.penDrawing = true;
+    const activePath = layer.path;
+
+    // Un clic dans une zone vide d'un tracé déjà fermé commence un nouveau
+    // tracé, comme dans Illustrator.
+    if (activePath.closed) {
       layer = this.createPathLayer();
       if (!layer?.path) return;
+      this.penDrawing = true;
     }
-    const activePath = layer.path;
-    const before = deepClone(activePath);
-    activePath.anchors.push({ x: point.x, y: point.y, inX: 0, inY: 0, outX: 0, outY: 0 });
+    const target = layer.path;
+    const previous = target.anchors[target.anchors.length - 1];
+    const before = deepClone(target);
+    // Maj aligne le nouveau point à 45° du précédent.
+    const placed = previous ? this.constrainPoint(previous, point, shift) : point;
+    target.anchors.push({ x: placed.x, y: placed.y, inX: 0, inY: 0, outX: 0, outY: 0 });
     this.drag = {
       kind: 'pen-new-anchor',
       layerId: layer.id,
-      index: activePath.anchors.length - 1,
+      index: target.anchors.length - 1,
       before,
-      start: point,
+      start: placed,
       moved: false,
     };
-    if (shift) {
-      const last = activePath.anchors[activePath.anchors.length - 1];
-      if (last) {
-        last.x = Math.round(last.x);
-        last.y = Math.round(last.y);
-      }
-    }
+    this.penHover = placed;
     renderLayer(layer);
     this.renderCanvas();
     this.renderOverlay();
   }
 
+  /**
+   * Insère une ancre sur un segment sans déformer la courbe : on coupe le
+   * cubic au paramètre `t` (de Casteljau) et on recalcule les poignées des
+   * deux moitiés.
+   */
+  private insertAnchor(segmentIndex: number, split: number): void {
+    const layer = this.activePathLayer;
+    const path = layer?.path;
+    if (!layer || !path) return;
+    const count = path.anchors.length;
+    const a = path.anchors[segmentIndex];
+    const b = path.anchors[(segmentIndex + 1) % count];
+    if (!a || !b) return;
+    const before = deepClone(path);
+
+    const u = split;
+    const p1 = { x: a.x + a.outX, y: a.y + a.outY };
+    const p2 = { x: b.x + b.inX, y: b.y + b.inY };
+    const q0 = { x: a.x + (p1.x - a.x) * u, y: a.y + (p1.y - a.y) * u };
+    const q1 = { x: p1.x + (p2.x - p1.x) * u, y: p1.y + (p2.y - p1.y) * u };
+    const q2 = { x: p2.x + (b.x - p2.x) * u, y: p2.y + (b.y - p2.y) * u };
+    const r0 = { x: q0.x + (q1.x - q0.x) * u, y: q0.y + (q1.y - q0.y) * u };
+    const r1 = { x: q1.x + (q2.x - q1.x) * u, y: q1.y + (q2.y - q1.y) * u };
+    const middle = { x: r0.x + (r1.x - r0.x) * u, y: r0.y + (r1.y - r0.y) * u };
+
+    a.outX = q0.x - a.x;
+    a.outY = q0.y - a.y;
+    b.inX = q2.x - b.x;
+    b.inY = q2.y - b.y;
+    // Segment droit : le point inséré reste un angle net, sans poignées
+    // fantômes (leur somme est nulle mais elles s'affichent).
+    const straight = !a.outX && !a.outY && !b.inX && !b.inY;
+    const inserted: Anchor = straight
+      ? { x: middle.x, y: middle.y, inX: 0, inY: 0, outX: 0, outY: 0 }
+      : {
+          x: middle.x,
+          y: middle.y,
+          inX: r0.x - middle.x,
+          inY: r0.y - middle.y,
+          outX: r1.x - middle.x,
+          outY: r1.y - middle.y,
+        };
+    path.anchors.splice(segmentIndex + 1, 0, inserted);
+
+    const after = deepClone(path);
+    renderLayer(layer);
+    this.history.push({
+      label: t('msg.pointAdd'),
+      undo: () => {
+        layer.path = deepClone(before);
+        layer.kind = 'path';
+        renderLayer(layer);
+        this.renderAll();
+      },
+      redo: () => {
+        layer.path = deepClone(after);
+        layer.kind = 'path';
+        renderLayer(layer);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage(t('msg.pointAdded'));
+  }
+
+  /**
+   * Bascule une ancre entre angle et courbe lissée. Les poignées d'une courbe
+   * sont alignées sur la corde des deux voisines, comme dans Illustrator.
+   */
+  private toggleAnchorSmooth(index: number): void {
+    const layer = this.activePathLayer;
+    const path = layer?.path;
+    if (!layer || !path) return;
+    const anchor = path.anchors[index];
+    if (!anchor) return;
+    const before = deepClone(path);
+    const hasHandles = Boolean(anchor.inX || anchor.inY || anchor.outX || anchor.outY);
+    if (hasHandles) {
+      anchor.inX = 0;
+      anchor.inY = 0;
+      anchor.outX = 0;
+      anchor.outY = 0;
+    } else {
+      const count = path.anchors.length;
+      const hasPrev = path.closed || index > 0;
+      const hasNext = path.closed || index < count - 1;
+      const prev = path.anchors[(index - 1 + count) % count];
+      const next = path.anchors[(index + 1) % count];
+      let dx = 1;
+      let dy = 0;
+      if (hasPrev && hasNext && prev && next) {
+        dx = next.x - prev.x;
+        dy = next.y - prev.y;
+      } else if (hasNext && next) {
+        dx = next.x - anchor.x;
+        dy = next.y - anchor.y;
+      } else if (hasPrev && prev) {
+        dx = anchor.x - prev.x;
+        dy = anchor.y - prev.y;
+      }
+      const length = Math.hypot(dx, dy) || 1;
+      const reach = Math.max(16, Math.min(120, Math.hypot(dx, dy) / 3));
+      const ux = (dx / length) * reach;
+      const uy = (dy / length) * reach;
+      anchor.outX = ux;
+      anchor.outY = uy;
+      anchor.inX = -ux;
+      anchor.inY = -uy;
+    }
+    renderLayer(layer);
+    const after = deepClone(path);
+    this.history.push({
+      label: t('msg.pointSmooth'),
+      undo: () => {
+        layer.path = deepClone(before);
+        layer.kind = 'path';
+        renderLayer(layer);
+        this.renderAll();
+      },
+      redo: () => {
+        layer.path = deepClone(after);
+        layer.kind = 'path';
+        renderLayer(layer);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+  }
+
   private onPenMove(event: PointerEvent): void {
     const drag = this.drag;
-    if (!drag || !this.doc) return;
-    if (drag.kind !== 'pen-anchor' && drag.kind !== 'pen-handle' && drag.kind !== 'pen-new-anchor') return;
-    const layer = this.doc.layers.find((item) => item.id === drag.layerId);
+    const doc = this.doc;
+    if (!doc) return;
+    if (!drag || (drag.kind !== 'pen-anchor' && drag.kind !== 'pen-handle' && drag.kind !== 'pen-new-anchor')) {
+      return;
+    }
+    const layer = doc.layers.find((item) => item.id === drag.layerId);
     if (!layer?.path) return;
     const current = this.docPoint(event);
     const origin = drag.kind === 'pen-anchor'
@@ -6788,13 +7506,15 @@ export class SuperPhotoEditor {
     const anchor = layer.path.anchors[drag.index];
     if (!anchor) return;
     if (drag.kind === 'pen-anchor') {
-      anchor.x = clamp(point.x, 0, this.doc.width);
-      anchor.y = clamp(point.y, 0, this.doc.height);
+      anchor.x = clamp(point.x, 0, doc.width);
+      anchor.y = clamp(point.y, 0, doc.height);
     } else if (drag.kind === 'pen-new-anchor') {
       const dx = point.x - drag.start.x;
       const dy = point.y - drag.start.y;
       if (Math.hypot(dx, dy) > 2 / this.zoom) drag.moved = true;
       if (drag.moved) {
+        // Le point de sortie suit la souris, le point d'entrée est son miroir :
+        // c'est le geste « tirer pour courber » de Figma.
         anchor.outX = dx;
         anchor.outY = dy;
         anchor.inX = -dx;
@@ -6819,9 +7539,83 @@ export class SuperPhotoEditor {
         }
       }
     }
+    this.penHover = drag.kind === 'pen-new-anchor' ? point : null;
     renderLayer(layer);
     this.renderCanvas();
     this.renderOverlay();
+    this.updateCanvasCursor();
+  }
+
+  /** Survol : tracé élastique, anneau de fermeture, curseur contextuel. */
+  private updatePenHover(event: PointerEvent): void {
+    const inside = this.pointerInside;
+    if (!inside) {
+      if (this.penHover || this.penCloseHover) {
+        this.penHover = null;
+        this.penCloseHover = false;
+        this.penHoverAnchor = -1;
+        this.renderOverlay();
+      }
+      return;
+    }
+    const point = this.docPoint(event);
+    this.penHover = point;
+    const hit = this.penHit(point);
+    this.penHoverAnchor = hit?.kind === 'anchor' ? hit.index : -1;
+    const path = this.activePathLayer?.path;
+    const first = path?.anchors[0];
+    const canClose = Boolean(
+      this.penDrawing &&
+      path &&
+      !path.closed &&
+      path.anchors.length >= 2 &&
+      first &&
+      Math.hypot(point.x - first.x, point.y - first.y) < this.penTolerance() * 1.4,
+    );
+    this.penCloseHover = canClose;
+    const segment = path?.closed ? this.penSegmentHit(point) : null;
+
+    // Curseur : fermeture prioritaire, puis poignée (main), puis ancre.
+    if (this.display) {
+      if (canClose) this.display.style.cursor = 'pointer';
+      else if (hit) this.display.style.cursor = hit.kind === 'anchor' ? 'move' : 'grab';
+      else if (segment) this.display.style.cursor = 'copy';
+      else this.display.style.cursor = TOOLS.pen.cursor;
+    }
+    this.renderOverlay();
+  }
+
+  /** Termine le tracé en cours (Entrée) : le calque reste, la plume reste active. */
+  private commitPenPath(): void {
+    const layer = this.activePathLayer;
+    this.penDrawing = false;
+    this.penHover = null;
+    this.penCloseHover = false;
+    this.penHoverAnchor = -1;
+    if (!layer?.path) {
+      this.renderOverlay();
+      return;
+    }
+    if (layer.path.anchors.length < 2) {
+      // Un point isolé n'est pas un tracé : on retire le calque vide.
+      const doc = this.doc;
+      if (doc) {
+        const index = doc.layers.findIndex((item) => item.id === layer.id);
+        if (index >= 0 && doc.layers.length > 1) {
+          doc.layers.splice(index, 1);
+          const next = doc.layers[Math.min(index, doc.layers.length - 1)];
+          doc.activeLayerId = next?.id ?? '';
+        }
+      }
+      this.layersDirty = true;
+      this.renderAll();
+      return;
+    }
+    renderLayer(layer);
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage(t('msg.pathCommitted'));
   }
 
   private finishPen(drag: Extract<DragState, { kind: 'pen-anchor' | 'pen-handle' | 'pen-new-anchor' }>): void {
@@ -6830,7 +7624,10 @@ export class SuperPhotoEditor {
     const layer = doc.layers.find((item) => item.id === drag.layerId);
     if (!layer?.path) return;
     const after = deepClone(layer.path);
-    if (JSON.stringify(after) === JSON.stringify(drag.before)) return;
+    if (JSON.stringify(after) === JSON.stringify(drag.before)) {
+      this.renderOverlay();
+      return;
+    }
     const before = deepClone(drag.before);
     this.history.push({
       label: t('msg.editPath'),
@@ -6874,18 +7671,60 @@ export class SuperPhotoEditor {
         this.renderAll();
       },
     });
+    // Le tracé est fini : le prochain clic dessine ailleurs, mais on reste avec
+    // la plume en main (pas de retour forcé à l'outil de sélection).
+    this.penDrawing = false;
+    this.penHover = null;
+    this.penCloseHover = false;
+    this.penHoverAnchor = -1;
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
     this.setMessage(t('msg.pathClosed'));
   }
 
-  private deleteLastAnchor(): void {
+  private deleteLastAnchor(index?: number): void {
     const layer = this.activePathLayer;
     if (!layer?.path || layer.path.anchors.length === 0) return;
+    const target = index ?? (this.penHoverAnchor >= 0 ? this.penHoverAnchor : layer.path.anchors.length - 1);
+    if (target < 0 || target >= layer.path.anchors.length) return;
     const before = deepClone(layer.path);
-    layer.path.anchors.pop();
+    layer.path.anchors.splice(target, 1);
+    if (layer.path.anchors.length < 3) layer.path.closed = false;
     const after = deepClone(layer.path);
+    if (layer.path.anchors.length === 0) {
+      // Plus rien à dessiner : on retire le calque vide pour ne pas laisser de
+      // « Tracé 3 » fantôme dans la pile.
+      const doc = this.doc;
+      if (doc && doc.layers.length > 1) {
+        const at = doc.layers.findIndex((item) => item.id === layer.id);
+        if (at >= 0) {
+          doc.layers.splice(at, 1);
+          const next = doc.layers[Math.min(at, doc.layers.length - 1)];
+          doc.activeLayerId = next?.id ?? '';
+        }
+        this.penDrawing = false;
+        this.penHoverAnchor = -1;
+        this.history.push({
+          label: t('msg.pointDelete'),
+          undo: () => {
+            doc.layers.splice(Math.min(at, doc.layers.length), 0, layer);
+            doc.activeLayerId = layer.id;
+            this.renderAll();
+          },
+          redo: () => {
+            const current = doc.layers.findIndex((item) => item.id === layer.id);
+            if (current >= 0) doc.layers.splice(current, 1);
+            const fallback = doc.layers[Math.min(at, doc.layers.length - 1)];
+            doc.activeLayerId = fallback?.id ?? '';
+            this.renderAll();
+          },
+        });
+        this.layersDirty = true;
+        this.renderAll();
+        return;
+      }
+    }
     renderLayer(layer);
     this.history.push({
       label: t('msg.pointDelete'),
@@ -6902,9 +7741,11 @@ export class SuperPhotoEditor {
         this.renderAll();
       },
     });
+    this.penHoverAnchor = -1;
     this.layersDirty = true;
     this.renderAll();
     this.renderToolOptions();
+    this.setMessage(t('msg.pointDeleted'));
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -7034,6 +7875,14 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
+        // Plume : Échap termine le tracé et rend la main à la sélection, le
+        // geste « j'ai fini » de Figma.
+        if (this.activeTool === 'pen') {
+          if (this.penDrawing) this.commitPenPath();
+          this.setTool('select');
+          event.preventDefault();
+          return;
+        }
         this.selection = null;
         this.renderOverlay();
         event.preventDefault();
@@ -7160,6 +8009,31 @@ export class SuperPhotoEditor {
           this.moveActiveLayer(1);
           return;
         }
+        if (event.key === '/' || event.key === ':') {
+          // Ctrl+/ : verrouille ou déverrouille la sélection (Photoshop).
+          event.preventDefault();
+          const layers = this.selectedLayers();
+          const primary = this.activeLayer;
+          const targets = layers.length > 0 ? layers : primary ? [primary] : [];
+          if (targets.length === 0) return;
+          const lock = !targets.every((item) => item.locked);
+          const snapshot = targets.map((item) => ({ layer: item, locked: Boolean(item.locked) }));
+          for (const item of targets) item.locked = lock;
+          this.history.push({
+            label: lock ? t('layers.lock') : t('layers.unlock'),
+            undo: () => {
+              for (const entry of snapshot) entry.layer.locked = entry.locked;
+              this.renderAll();
+            },
+            redo: () => {
+              for (const entry of snapshot) entry.layer.locked = lock;
+              this.renderAll();
+            },
+          });
+          this.renderAll();
+          this.setMessage(lock ? t('msg.layersLocked', { n: targets.length }) : t('msg.layersUnlocked', { n: targets.length }));
+          return;
+        }
       }
       if (event.key === 'F11') {
         event.preventDefault();
@@ -7183,14 +8057,22 @@ export class SuperPhotoEditor {
           this.applyCrop();
           return;
         }
-        if (this.activeTool === 'pen') {
+        // Entrée termine le tracé mais laisse la plume en main : on enchaîne
+        // directement sur le tracé suivant.
+        if (this.activeTool === 'pen' && this.penDrawing) {
           event.preventDefault();
-          this.setTool('select');
+          this.commitPenPath();
           return;
         }
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (!this.doc) return;
+        // Plume : Suppr retire le point survolé, sinon le dernier.
+        if (this.activeTool === 'pen' && this.penDrawing) {
+          event.preventDefault();
+          this.deleteLastAnchor();
+          return;
+        }
         event.preventDefault();
         if (event.altKey) {
           if (this.selection) this.fillSelection(this.primaryColor);
@@ -7290,7 +8172,7 @@ export class SuperPhotoEditor {
     const layer = this.activeLayer;
     if (!doc || !layer || !this.selection) return;
     if (layer.kind === 'text' || layer.kind === 'path') {
-      this.toast('Aplatissez ou dupliquez le calque avant de le vider.', 'info');
+      this.toast(t('msg.flattenFirst'), 'info');
       return;
     }
     const before = cloneCanvas(layer.canvas);
@@ -7346,9 +8228,10 @@ export class SuperPhotoEditor {
       return;
     }
     if (layer.kind === 'text' || layer.kind === 'path') {
-      this.toast('Aplatissez ou dupliquez le calque avant de le remplir.', 'info');
+      this.toast(t('msg.flattenBeforeFill'), 'info');
       return;
     }
+    if (this.layerLocked(layer)) return;
     const isMask = Boolean(layer.mask && layer.maskEditing);
     const canvas = isMask ? layer.mask : layer.canvas;
     if (!canvas) return;

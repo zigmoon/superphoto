@@ -97,12 +97,33 @@ open on their first frame.
 
 ### Left column — Layers
 
-Add, duplicate, delete, reorder. Visibility, opacity and 16 blend modes
+Add, duplicate, delete and reorder. Visibility, opacity and 16 blend modes
 (Normal, Multiply, Screen, Overlay, Darken, Lighten, Color Dodge/Burn, Hard and
 Soft Light, Difference, Exclusion, Hue, Saturation, Color, Luminosity).
 
-**Layer masks**: add, paint, disable, re-enable, apply to pixels or remove.
-Click the mask thumbnail to switch between painting pixels and painting the mask.
+**Drag a row to reorder the stack** — a drop line shows where it will land, and
+the whole move is a single undo step. Dragging a row that is part of a
+multi-selection carries the whole group.
+
+**Shift-click** (or ⌘/Ctrl-click) selects several layers at once.
+Delete, duplicate, reorder and the opacity slider then apply to all of them.
+
+**Lock** a layer with the padlock on the right of its row (or `Ctrl+/`). A locked
+layer can still be selected, but it refuses painting, moving, resizing, filling,
+adjustments, merging, deletion and reordering — its transform box is drawn dashed,
+without handles.
+
+**Layer masks** work like Photoshop's: add, paint, disable, re-enable, apply to
+pixels or remove.
+
+| Gesture on the mask thumbnail | Effect |
+| --- | --- |
+| Click | Paint the mask instead of the pixels |
+| Click the **layer** thumbnail | Go back to painting the pixels |
+| Shift-click | Disable / re-enable the mask without deleting it |
+
+Painting with a light colour reveals, with a dark colour hides — the foreground
+swatch decides, so `X` flips between the two.
 
 ### Right column — Tools and adjustments
 
@@ -113,7 +134,7 @@ Click the mask thumbnail to switch between painting pixels and painting the mask
 | **Magic wand** (`W`) | Select by color proximity — tolerance, contiguous areas, sample the composite image, with the same feather. |
 | **Crop** (`C`) | Free frame or 1:1, 4:3, 16:9, 3:2, 4:5; confirm with Enter. |
 | **Shapes** (`U`) | Rectangle, ellipse, triangle, star, line — fill, stroke, width, radius. |
-| **Pen** (`P`) | Bézier paths: click to place a point, drag to bend; points and handles stay editable. |
+| **Pen** (`P`) | Bézier paths with a live rubber band: click for a corner, drag to bend, Shift snaps to 45°, Alt breaks the handles, double-click a point to smooth it, click the first point to close. Enter finishes and keeps the pen, Esc finishes and returns to Select. |
 | **Text** (`T`) | Editable text blocks: content, font, size, weight, color, alignment. |
 | **Pencil** (`N`) | Hard edge, no smoothing. Alt erases. |
 | **Brush** (`B`) | Soft stamps: size 1–600 px, hardness, opacity, spacing, 8/24/56/120/280 presets. Alt erases. |
@@ -170,6 +191,31 @@ measured on the real pixels, not on the canvas. Drag the box to move the layer,
 drag a handle to resize it, `Shift` keeps the proportions, `Alt` scales from the
 centre. Every gesture lands exactly where the pointer is, at any zoom, and each
 one is a single undo step.
+
+### Sliders that always look right
+
+Every range input paints its filled portion from a single delegated listener plus
+a `MutationObserver`, so a slider created later — plug-in parameters, layer
+opacity, export quality — is styled the moment it appears and stays in sync when
+its value changes in code
+([`src/lib/ranges.ts`](./src/lib/ranges.ts)).
+
+### Drawing a path with the pen
+
+The pen behaves like a vector editor, not like a click-to-add-point tool:
+
+- **Click** places a corner point; **drag** pulls symmetric handles out of it.
+- **Shift** constrains the point to 45° from the previous one.
+- **Alt** while dragging a handle breaks the pair, so the curve can kink.
+- **Double-click** (or Alt-click) a point toggles it between smooth and corner.
+- A **rubber band** previews the next segment, and the first point grows a ring
+  when the pointer is close enough to close the path.
+- Clicking the first point closes the path and **keeps the pen in hand**; the next
+  click starts a new path.
+- Clicking a **segment** of a closed path inserts a point there, splitting the
+  Bézier with de Casteljau so the outline does not move.
+- **Enter** commits and stays in the pen; **Esc** commits and switches to Select;
+  **Backspace** removes the point under the cursor.
 
 ### Plug-ins
 
@@ -300,7 +346,7 @@ npm run brand:png      # rasterize the icons, favicon and social card
 | **macOS universal** | `SuperPhoto_<version>_universal.dmg` (Apple Silicon + Intel) |
 | **Release GitHub** | on a `v*` tag: every file above, plus stable names for the README links |
 
-Releasing is just `git tag v0.2.2 && git push origin v0.2.2`.
+Releasing is just `git tag v0.2.3 && git push origin v0.2.3`.
 
 Each install job is **unsigned by default** and becomes signed automatically
 once the signing secrets are set — no workflow edit needed
@@ -335,6 +381,7 @@ src/
     i18n.ts         EN / FR / JA dictionaries
     media.ts        image + video decoding (any format the platform supports)
     preferences.ts  theme, motion, quality, persistence
+    ranges.ts       paints every slider's filled portion, automatically
   styles/app.css  design tokens, light and dark themes
 src-tauri/        Rust backend: native file dialogs, image decoding, export
 ```
@@ -373,16 +420,24 @@ Press `F1` (or `?`) anywhere to open the full, always up-to-date list.
 | `Alt + [` / `Alt + ]` | select the layer below / above |
 | `Ctrl/⌘ + T` | free transform (box + handles) |
 | `Ctrl/⌘ + Alt + E` | open the active plug-in (Effects 2026) |
+| `Ctrl/⌘ + /` | lock / unlock the selected layers |
+| `Shift + click` (layers) | add or remove a layer from the selection |
+| `drag` (layers) | reorder the stack, group included |
 | `← ↑ → ↓` (`Shift` ×10) | nudge the layer content by 1 px |
 | `Ctrl/⌘ + A` / `Ctrl/⌘ + D` / `Ctrl/⌘ + Shift + I` | select all / deselect / invert |
-| `Del` | clear the selection · **delete the layer** when nothing is selected |
+| `Del` | clear the selection · **delete the layer** when nothing is selected · remove the hovered pen point |
 | `Shift + Del` | clear the whole layer content, keeping the layer |
 | `Alt + Del` / `Ctrl/⌘ + Del` | fill the selection with the primary / secondary color |
 | `Ctrl/⌘ + 0` / `Ctrl/⌘ + 1` | fit to window / zoom 100 % |
 | `Ctrl/⌘ + +` / `Ctrl/⌘ + -` | zoom in / out |
 | `X` / `D` | swap / reset the primary and secondary colors |
-| `Enter` | apply the crop · finish the pen path |
-| `Esc` | cancel the adjustment, crop or selection |
+| `Enter` | apply the crop · finish the pen path and keep the pen |
+| `Esc` | cancel the adjustment, crop or selection · leave the pen for Select |
+| `Shift` (pen) | snap the new point to 45° |
+| `Alt` (pen) | break the handles while dragging |
+| `double-click` (pen) | toggle a point between smooth and corner |
+| `Space` | temporary hand |
+| `F11` | full screen |
 | `Space` | temporary hand |
 | `F11` | full screen |
 

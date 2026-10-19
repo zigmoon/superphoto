@@ -817,6 +817,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   gap: 3px;
   contain: layout style;
   overscroll-behavior: contain;
+  position: relative;
 }
 
 .empty-hint {
@@ -830,7 +831,7 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 
 .layer-row {
   display: grid;
-  grid-template-columns: 22px 48px auto minmax(0, 1fr);
+  grid-template-columns: 22px 48px auto minmax(0, 1fr) 18px;
   align-items: center;
   gap: 8px;
   padding: 6px;
@@ -839,8 +840,17 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   background: color-mix(in srgb, var(--text) 2%, transparent);
   cursor: pointer;
   contain: layout style;
+  touch-action: none;
   transition: background-color 100ms var(--ease), border-color 100ms var(--ease);
 }
+
+/* Colonnes explicites : sans masque, la vignette de masque est retirée du flux
+   et le nom garde la même position dans toutes les lignes. */
+.layer-eye { grid-column: 1; }
+.layer-thumb-slot { grid-column: 2; }
+.layer-mask-slot { grid-column: 3; }
+.layer-meta { grid-column: 4; }
+.layer-lock { grid-column: 5; }
 
 .layer-row:hover {
   background: var(--bg-raised);
@@ -850,6 +860,103 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
 .layer-row.is-active {
   background: var(--accent-soft);
   border-color: var(--accent-line);
+}
+
+/* Sélection multiple (Maj / Ctrl + clic) : un liseré discret, l'accent restant
+   réservé au calque pilote. */
+.layer-row.is-selected:not(.is-active) {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.layer-row.is-hidden-layer .layer-name {
+  opacity: 0.55;
+}
+
+.layer-row.is-dragging {
+  opacity: 0.45;
+}
+
+.layers-list.is-dragging-layers .layer-row {
+  cursor: grabbing;
+}
+
+.layer-drop-indicator {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-surface) 60%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.layer-drop-indicator[hidden] {
+  display: none;
+}
+
+.layer-thumb-slot,
+.layer-mask-slot {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.layer-thumb-slot:hover,
+.layer-mask-slot:hover {
+  border-color: var(--line-strong);
+}
+
+.layer-thumb-slot.is-editing {
+  border-color: var(--accent-line);
+}
+
+.layer-lock {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 120ms var(--ease), color 120ms var(--ease);
+}
+
+.layer-lock svg {
+  width: 13px;
+  height: 13px;
+}
+
+.layer-row:hover .layer-lock,
+.layer-row.is-locked .layer-lock,
+.layer-lock:focus-visible {
+  opacity: 1;
+}
+
+.layer-row.is-locked .layer-lock {
+  color: var(--accent);
+}
+
+.layer-lock:hover {
+  color: var(--text);
+}
+
+.layer-row.is-locked {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--text) 3%, transparent) 0 6px,
+    transparent 6px 12px
+  );
 }
 
 .layer-eye {
@@ -891,22 +998,8 @@ html:fullscreen #btn-fullscreen .fs-icon-exit,
   background-position: 0 0, 5px 5px;
 }
 
-.layer-mask-slot {
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
-}
-
 .layer-mask-slot[hidden] {
   display: none;
-}
-
-.layer-mask-slot:hover {
-  border-color: var(--line-strong);
 }
 
 .layer-mask-slot.is-editing {
@@ -2124,6 +2217,10 @@ html.theme-dark .segmented button.is-active {
   pointer-events: none;
 }
 
+.layer-box.is-locked {
+  stroke-dasharray: 5 4;
+}
+
 .layer-handle {
   fill: var(--bg-surface);
   stroke: var(--text);
@@ -2200,6 +2297,38 @@ html.theme-dark .segmented button.is-active {
 .path-anchor.is-selected {
   fill: var(--selection);
   stroke: var(--selection-ink);
+}
+
+.path-anchor.is-hovered {
+  fill: var(--selection);
+  stroke: var(--selection-ink);
+}
+
+/* Premier point d'un tracé ouvert : plein, c'est la cible de fermeture. */
+.path-anchor.is-first {
+  fill: var(--selection);
+}
+
+/* Point fantôme : là où le prochain clic posera l'ancre. */
+.path-anchor.is-ghost {
+  fill: transparent;
+  stroke-dasharray: 2 2;
+  opacity: 0.75;
+}
+
+.path-rubber {
+  stroke: var(--selection);
+  stroke-width: 1.2;
+  stroke-dasharray: 5 4;
+  opacity: 0.75;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.85));
+}
+
+.path-close-ring {
+  fill: none;
+  stroke: var(--selection);
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.85));
 }
 
 .text-bounds {
