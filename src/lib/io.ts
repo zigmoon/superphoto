@@ -1,4 +1,5 @@
 import { OPEN_ACCEPT, VIDEO_EXTENSIONS } from './media';
+import { SPP_EXTENSION, SPP_MIME } from './package';
 import { SPS_MIME } from './project';
 import { blobToBase64, base64ToBlob, downloadBlob } from './utils';
 
@@ -53,6 +54,8 @@ export function mimeFromName(name: string): string {
     mkv: 'video/x-matroska',
     avi: 'video/x-msvideo',
     sps: SPS_MIME,
+    spp: SPP_MIME,
+    zip: SPP_MIME,
   };
   return map[ext] ?? 'application/octet-stream';
 }
@@ -97,7 +100,7 @@ export async function readNativeImage(path: string): Promise<OpenedImage> {
     : mimeFromName(path);
   // Un `.sps` est du JSON : on garde le type applicatif pour que l'ouverture
   // sache qu'il faut lire un projet et non une image.
-  const type = extension === 'sps' ? SPS_MIME : mime;
+  const type = extension === 'sps' ? SPS_MIME : extension === SPP_EXTENSION || extension === 'zip' ? SPP_MIME : mime;
   return {
     name: payload.name,
     blob: base64ToBlob(payload.dataBase64, type),
@@ -118,7 +121,7 @@ export async function openImages(): Promise<OpenedImage[]> {
           extensions: [
             'png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'avif', 'gif', 'bmp', 'dib',
             'tif', 'tiff', 'svg', 'svgz', 'ico', 'cur', 'heic', 'heif', 'jxl', 'jp2',
-            'mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'avi', 'sps',
+            'mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'avi', 'sps', 'spp', 'zip',
           ],
         },
         { name: 'Tous les fichiers', extensions: ['*'] },
@@ -153,7 +156,15 @@ export async function saveExport(
     const { save } = await import('@tauri-apps/plugin-dialog');
     const { invoke } = await import('@tauri-apps/api/core');
     const extension = filename.split('.').pop() ??
-      (mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : mime === SPS_MIME ? 'sps' : 'png');
+      (mime === 'image/jpeg'
+        ? 'jpg'
+        : mime === 'image/webp'
+          ? 'webp'
+          : mime === SPS_MIME
+            ? 'sps'
+            : mime === SPP_MIME
+              ? SPP_EXTENSION
+              : 'png');
     const target = await save({
       title: 'Enregistrer depuis SuperPhoto',
       defaultPath: filename,
@@ -173,6 +184,7 @@ export function extensionForMime(mime: string): string {
   if (mime === 'image/jpeg') return 'jpg';
   if (mime === 'image/webp') return 'webp';
   if (mime === SPS_MIME) return 'sps';
+  if (mime === SPP_MIME) return SPP_EXTENSION;
   return 'png';
 }
 

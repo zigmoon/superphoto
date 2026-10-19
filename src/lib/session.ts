@@ -1,4 +1,4 @@
-import type { BlendMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
+import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
 import { canvasContext, createCanvas } from './utils';
 
 /**
@@ -38,6 +38,7 @@ export interface SessionDocument {
   height: number;
   dpi: number;
   background: PhotoDoc['background'];
+  colorMode?: ColorMode;
   activeLayerId: string;
   layers: SessionLayer[];
 }
@@ -57,6 +58,7 @@ interface LegacySnapshot {
   height: number;
   dpi: number;
   background: PhotoDoc['background'];
+  colorMode?: ColorMode;
   activeLayerId: string;
   layers: SessionLayer[];
 }
@@ -136,6 +138,7 @@ async function serializeDocument(doc: PhotoDoc): Promise<SessionDocument> {
     height: doc.height,
     dpi: doc.dpi,
     background: doc.background,
+    colorMode: doc.colorMode ?? 'rgb',
     activeLayerId: doc.activeLayerId,
     layers,
   };
@@ -232,6 +235,7 @@ export async function restoreDocument(snapshot: SessionDocument): Promise<PhotoD
     height: snapshot.height,
     dpi: snapshot.dpi,
     background: snapshot.background,
+    colorMode: snapshot.colorMode ?? 'rgb',
     layers,
     activeLayerId: layers.some((layer) => layer.id === snapshot.activeLayerId)
       ? snapshot.activeLayerId

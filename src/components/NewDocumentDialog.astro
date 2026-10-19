@@ -95,6 +95,13 @@ import BrandMark from './BrandMark.astro';
           <button data-bg="black" data-i18n="new.black">Black</button>
         </div>
 
+        <div class="pane-label spaced" data-i18n="mode.title">Colour mode</div>
+        <div class="segmented" id="new-color-mode">
+          <button data-mode="rgb" class="is-active" data-i18n="mode.rgb">RGB</button>
+          <button data-mode="cmyk" data-i18n="mode.cmyk">CMYK</button>
+          <button data-mode="gray" data-i18n="mode.gray">B&amp;W</button>
+        </div>
+
         <div class="new-preview-wrap">
           <div class="new-preview-stage">
             <div class="new-preview-box" id="new-preview-box"></div>

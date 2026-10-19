@@ -1,6 +1,6 @@
 {
   "name": "superphoto",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "description": "SuperPhoto — photo retouching studio in Astro + Rust (Tauri) for Windows, macOS and Linux.",

@@ -127,6 +127,10 @@ swatch decides, so `X` flips between the two.
 
 ### Right column — Tools and adjustments
 
+The **options of the active tool sit right under Zoom and Hand**, at the bottom of
+the *Selection & drawing* grid, so choosing a tool never means scrolling past the
+image and adjustment groups to find its settings.
+
 | Tool | What it does |
 | --- | --- |
 | **Select** (`V`) | Pick a layer, draw its **transform box** (8 handles), drag the box to move, drag a handle to resize. |
@@ -245,6 +249,63 @@ the zoom / full-screen controls follow. A second click, the `×`, `Esc` or
 The preview is live on the canvas at a reduced resolution, and **Apply**
 recomputes at full resolution with the same seeded randomness — what you see is
 exactly what you get. Every application is one undo step.
+
+### Save — the `.spp` package
+
+**Save** (floppy icon, right of Open, `Ctrl/⌘ + Shift + S`) writes one `.spp`
+file and asks whether to include **the current tab** or **all open tabs**:
+
+| Choice | What goes in the file |
+| --- | --- |
+| Current tab | one document, its layers, masks, text, paths and colour mode |
+| All tabs | every open document, plus which one was active |
+
+A `.spp` is a **plain ZIP archive** — rename it to `.zip` and look inside:
+
+```
+manifest.json                 package index (one entry per document)
+README.txt                    what the file contains, in clear text
+preview.png                   preview of the active document
+documents/doc-1.json          layers, text, paths, masks, colour mode
+documents/doc-1/layer-1-*.png full-resolution layer pixels
+documents/doc-1/mask-1.png    layer masks, when they exist
+```
+
+Images stay **binary PNG**, not base64: the package is smaller than the
+equivalent `.sps` files and every layer stays openable on its own. Open it again
+with **Open** (or drop it on the window): each document comes back as its own
+tab, in the same order, with the same active tab. A package re-zipped by
+Explorer, Finder or 7-Zip (deflate) is read just as well as one written here.
+
+### Where an opened media goes
+
+When a document is already open, opening an image asks where it should land:
+
+| Choice | Effect |
+| --- | --- |
+| **In the current workspace** | replaces the document of the active tab (history reset) |
+| **In a new tab** | keeps everything that is already open |
+
+Dropping several files at once skips the question and gives each file its own
+tab. `.sps` and `.spp` always open in new tabs.
+
+### Colour modes
+
+Documents carry a colour mode: **RGB** (default), **CMYK** or **B&W**. It is
+chosen in the New dialog and can be changed at any time from
+**Image → Colour mode** in the right column; the mode is shown in the title bar,
+in the Layers panel and in the export summary.
+
+SuperPhoto works in 8-bit RGB internally — that is what canvas gives without an
+ICC engine. The mode therefore describes the **conversion** applied to the
+pixels, the same way Photoshop's mode conversion works:
+
+- **RGB → CMYK** simulates ink: total-area coverage limited to 300 %, dot gain on
+  midtones, and a maximum ink density below 1, so saturated colours come out
+  duller exactly as they would on paper.
+- **→ B&W** applies Rec. 709 luminance to every layer.
+- Going **back** to RGB does not restore what the narrower gamut clipped — the
+  conversion is one undo step, and undo *does* restore the original pixels.
 
 ### Export
 
@@ -376,6 +437,9 @@ src/
     selection.ts    magic wand (flood fill → polygons)
     mask.ts         layer masks
     adjustments.ts  tonality, contrast, color, levels, curves
+    colorspace.ts   RGB / CMYK / grayscale document modes
+    zip.ts          minimal ZIP reader/writer (no dependency)
+    package.ts      .spp package: manifest + document JSON + PNG layers
     project.ts      .sps read/write
     session.ts      IndexedDB autosave (all tabs)
     i18n.ts         EN / FR / JA dictionaries
@@ -414,6 +478,7 @@ Press `F1` (or `?`) anywhere to open the full, always up-to-date list.
 | `Alt + click` | stamp source · temporary eraser · secondary color |
 | `Ctrl/⌘ + Z` / `Ctrl/⌘ + Shift + Z` / `Ctrl/⌘ + Y` | undo / redo |
 | `Ctrl/⌘ + N` / `Ctrl/⌘ + O` / `Ctrl/⌘ + S` | new / open / export |
+| `Ctrl/⌘ + Shift + S` | save a `.spp` package (current tab or all tabs) |
 | `Ctrl/⌘ + Shift + N` / `Ctrl/⌘ + J` | new layer / duplicate layer |
 | `Ctrl/⌘ + E` | merge down |
 | `Ctrl/⌘ + [` / `Ctrl/⌘ + ]` | move the layer down / up |

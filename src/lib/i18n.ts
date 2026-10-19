@@ -52,6 +52,12 @@ const D: Record<string, [string, string, string]> = {
   'topbar.newTitle': ['New document (Ctrl+N)', 'Nouveau document (Ctrl+N)', '新規ドキュメント (Ctrl+N)'],
   'topbar.open': ['Open', 'Ouvrir', '開く'],
   'topbar.openTitle': ['Open an image (Ctrl+O)', 'Ouvrir une image (Ctrl+O)', '画像を開く (Ctrl+O)'],
+  'topbar.save': ['Save', 'Enregistrer', '保存'],
+  'topbar.saveTitle': [
+    'Save a package (Ctrl+Shift+S)',
+    'Enregistrer un paquet (Ctrl+Maj+S)',
+    'パッケージを保存 (Ctrl+Shift+S)',
+  ],
   'topbar.export': ['Export', 'Exporter', '書き出し'],
   'topbar.exportTitle': ['Export (Ctrl+S)', 'Exporter (Ctrl+S)', '書き出し (Ctrl+S)'],
   'topbar.undo': ['Undo', 'Annuler', '元に戻す'],
@@ -675,6 +681,92 @@ const D: Record<string, [string, string, string]> = {
     'プラグインは src/lib/plugins.ts の 1 エントリです。各エフェクトはスライダーを持つ純粋なピクセル関数です。ネットワークも追加ビルドも不要です。',
   ],
   'topbar.plugins': ['Plug-ins (Ctrl+Alt+E)', 'Plug-ins (Ctrl+Alt+E)', 'プラグイン (Ctrl+Alt+E)'],
+
+  // ── Enregistrement d'un paquet `.spp` ───────────────────────────────────
+  'save.title': ['Save a package', 'Enregistrer un paquet', 'パッケージを保存'],
+  'save.subtitle': [
+    'One .spp file: every layer, mask, text and colour mode. Reopen it with Open.',
+    'Un seul fichier .spp : tous les calques, masques, textes et modes. Se rouvre par Ouvrir.',
+    '.spp 1 ファイルに、レイヤー・マスク・テキスト・カラーモードをすべて保存します。',
+  ],
+  'save.scope': ['What to save', 'Quoi enregistrer', '保存する範囲'],
+  'save.currentTab': ['Current tab', 'Onglet en cours', '現在のタブ'],
+  'save.allTabs': ['All tabs', 'Tous les onglets', 'すべてのタブ'],
+  'save.tabCount': ['{n} tab(s) open', '{n} onglet(s) ouvert(s)', '{n} 個のタブ'],
+  'save.none': ['No document', 'Aucun document', 'ドキュメントなし'],
+  'save.filename': ['File name', 'Nom du fichier', 'ファイル名'],
+  'save.documents': ['Documents', 'Documents', 'ドキュメント'],
+  'save.layers': ['Layers', 'Calques', 'レイヤー'],
+  'save.masks': ['Masks', 'Masques', 'マスク'],
+  'save.pixels': ['Pixels', 'Pixels', 'ピクセル'],
+  'save.modes': ['Colour modes', 'Modes chromatiques', 'カラーモード'],
+  'save.note': [
+    'The package is a plain ZIP: rename it to .zip to inspect the JSON and the PNG layers.',
+    'Le paquet est un ZIP ordinaire : renommez-le en .zip pour voir le JSON et les PNG.',
+    'パッケージは通常の ZIP です。.zip に改名すると JSON と PNG を確認できます。',
+  ],
+  'save.run': ['Save', 'Enregistrer', '保存'],
+  'save.busy': ['Saving…', 'Enregistrement…', '保存中…'],
+  'save.done': ['{name} saved · {n} document(s)', '{name} enregistré · {n} document(s)', '{name} を保存 · {n} ドキュメント'],
+  'save.doneShort': ['Saved {name}', 'Enregistré : {name}', '{name} を保存しました'],
+  'save.failed': ['Save failed: {error}', 'Échec de l’enregistrement : {error}', '保存に失敗: {error}'],
+  'save.noDocument': ['Open a document before saving.', 'Ouvrez un document avant d’enregistrer.', '保存する前にドキュメントを開いてください。'],
+
+  // ── Paquet `.spp` : ouverture et erreurs ────────────────────────────────
+  'pkg.opened': ['{name} opened · {n} document(s)', '{name} ouvert · {n} document(s)', '{name} を開きました · {n} ドキュメント'],
+  'pkg.notPackage': [
+    'This file is not a SuperPhoto package.',
+    'Ce fichier n’est pas un paquet SuperPhoto.',
+    'このファイルは SuperPhoto パッケージではありません。',
+  ],
+  'pkg.tooRecent': [
+    'This package was saved by a newer version of SuperPhoto.',
+    'Ce paquet a été enregistré par une version plus récente de SuperPhoto.',
+    'このパッケージは新しいバージョンの SuperPhoto で保存されています。',
+  ],
+  'pkg.empty': ['This package contains no readable document.', 'Ce paquet ne contient aucun document lisible.', 'このパッケージには読めるドキュメントがありません。'],
+  'pkg.noDocument': ['Nothing to save.', 'Rien à enregistrer.', '保存するものがありません。'],
+
+  // ── Où ouvrir un média ──────────────────────────────────────────────────
+  'place.title': ['Where should it open?', 'Où ouvrir ce média ?', 'どこに開きますか？'],
+  'place.subtitle': ['“{name}” can replace the current document or open in its own tab.', '« {name} » peut remplacer le document courant ou s’ouvrir dans son propre onglet.', '「{name}」は現在のドキュメントを置き換えるか、新しいタブで開けます。'],
+  'place.subtitleMultiple': ['{n} files — each one opens in its own tab.', '{n} fichiers — chacun s’ouvre dans son propre onglet.', '{n} 個のファイル — それぞれ別のタブで開きます。'],
+  'place.current': ['In the current workspace', 'Dans le plan de travail', '現在のワークスペース'],
+  'place.currentHint': ['Replaces the document of the active tab.', 'Remplace le document de l’onglet actif.', 'アクティブなタブのドキュメントを置き換えます。'],
+  'place.tab': ['In a new tab', 'Dans un nouvel onglet', '新しいタブ'],
+  'place.tabHint': ['Keeps everything that is already open.', 'Garde tout ce qui est déjà ouvert.', '開いているものをそのまま残します。'],
+  'place.note': [
+    'Both choices keep the full resolution. The current workspace discards the tab history, so save it first if you need it.',
+    'Les deux choix gardent la pleine résolution. Le plan de travail efface l’historique de l’onglet : enregistrez-le avant si besoin.',
+    'どちらもフル解像度を保ちます。現在のワークスペースはタブの履歴を消すので、必要なら先に保存してください。',
+  ],
+
+  // ── Modes chromatiques ──────────────────────────────────────────────────
+  'mode.title': ['Colour mode', 'Mode chromatique', 'カラーモード'],
+  'mode.rgb': ['RGB', 'RVB', 'RGB'],
+  'mode.cmyk': ['CMYK', 'CMJN', 'CMYK'],
+  'mode.gray': ['B&W', 'N&B', 'モノクロ'],
+  'mode.rgbHint': ['RGB — screen output', 'RVB — sortie écran', 'RGB — 画面出力'],
+  'mode.cmykHint': ['CMYK — print simulation', 'CMJN — simulation d’impression', 'CMYK — 印刷シミュレーション'],
+  'mode.grayHint': ['Grayscale — one channel', 'Niveaux de gris — un seul canal', 'グレースケール — 1 チャンネル'],
+  'mode.note': [
+    'Converting to CMYK or grayscale clamps colours. Going back does not restore them.',
+    'Passer en CMJN ou en N&B écrase les couleurs. Revenir en arrière ne les restaure pas.',
+    'CMYK やグレースケールへの変換は色をクリップします。戻しても復元されません。',
+  ],
+  'mode.noteActive': [
+    'This document is {mode}. Converting again is applied to the pixels and cannot be undone by switching back.',
+    'Ce document est en {mode}. Une nouvelle conversion s’applique aux pixels et revenir en arrière ne les restaure pas.',
+    'このドキュメントは {mode} です。再変換はピクセルに適用され、戻しても復元されません。',
+  ],
+  'mode.noDocument': ['Open a document first.', 'Ouvrez d’abord un document.', '先にドキュメントを開いてください。'],
+  'mode.convertLabel': ['Convert {from} → {to}', 'Convertir {from} → {to}', '{from} → {to} に変換'],
+  'mode.converted': ['Converted to {mode}', 'Converti en {mode}', '{mode} に変換しました'],
+  'mode.samePixels': ['Colour mode changed', 'Mode chromatique modifié', 'カラーモードを変更しました'],
+  'mode.profile.rgb': ['RGB 8-bit · sRGB', 'RVB 8 bits · sRGB', 'RGB 8bit · sRGB'],
+  'mode.profile.cmyk': ['CMYK simulation · 8-bit', 'Simulation CMJN · 8 bits', 'CMYK シミュレーション · 8bit'],
+  'mode.profile.gray': ['Grayscale · 8-bit', 'Niveaux de gris · 8 bits', 'グレースケール · 8bit'],
+
 
   // ── Greffons ────────────────────────────────────────────────────────────
   'plugin.subtitle': [

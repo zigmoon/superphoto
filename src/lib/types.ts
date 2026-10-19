@@ -22,6 +22,9 @@ export type AdjustmentId = 'tonality' | 'contrast' | 'color' | 'levels' | 'curve
 
 export type LayerKind = 'raster' | 'text' | 'shape' | 'path';
 
+/** Mode chromatique du document. */
+export type ColorMode = 'rgb' | 'cmyk' | 'gray';
+
 export type BlendMode =
   | 'source-over'
   | 'multiply'
@@ -109,6 +112,9 @@ export interface PhotoDoc {
   height: number;
   dpi: number;
   background: 'white' | 'black' | 'transparent';
+  /** RVB (défaut), CMJN ou niveaux de gris. Les pixels restent des canvas RVB :
+   *  le mode décrit la conversion appliquée et le profil annoncé. */
+  colorMode?: ColorMode;
   layers: Layer[];
   activeLayerId: string;
 }

@@ -17,11 +17,15 @@ export const IMAGE_EXTENSIONS = [
 
 export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'avi'];
 
+/** Projets : `.sps` (document seul) et `.spp` (paquet, archive ZIP). */
+export const PROJECT_EXTENSIONS = ['sps', 'spp', 'zip'];
+
 export const OPEN_ACCEPT = [
   'image/*',
+  'application/zip',
   ...IMAGE_EXTENSIONS.map((extension) => `.${extension}`),
   ...VIDEO_EXTENSIONS.map((extension) => `.${extension}`),
-  '.sps',
+  ...PROJECT_EXTENSIONS.map((extension) => `.${extension}`),
 ].join(',');
 
 function extensionOf(name: string): string {

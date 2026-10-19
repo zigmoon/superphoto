@@ -1,6 +1,6 @@
 [package]
 name = "superphoto"
-version = "0.2.3"
+version = "0.2.4"
 description = "SuperPhoto — studio de retouche photographique Astro + Rust"
 authors = ["SuperPhoto"]
 license = "MIT"

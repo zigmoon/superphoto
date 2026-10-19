@@ -1,5 +1,6 @@
 import { cloneMask, drawMaskedLayer } from './mask';
 import type {
+  ColorMode,
   Layer,
   LayerKind,
   PathData,
@@ -42,6 +43,7 @@ export function createDocument(
   dpi: number,
   background: PhotoDoc['background'],
   name = t('new.untitled'),
+  colorMode: ColorMode = 'rgb',
 ): PhotoDoc {
   const layers: Layer[] = [];
   if (background !== 'transparent') {
@@ -63,6 +65,7 @@ export function createDocument(
     height,
     dpi,
     background,
+    colorMode,
     layers,
     activeLayerId: paintLayer.id,
   };

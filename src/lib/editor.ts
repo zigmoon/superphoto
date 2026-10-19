@@ -79,6 +79,14 @@ import {
   type Lang,
 } from './i18n';
 import { decodeMedia, isSupportedMedia } from './media';
+import {
+  SPP_MIME,
+  isSuperPhotoPackage,
+  looksLikePackage,
+  parsePackage,
+  serializePackage,
+} from './package';
+import { colorModeShort, convertDocumentMode } from './colorspace';
 import { looksLikeProject, parseProject, serializeProject, SPS_MIME } from './project';
 import { initRangePaint, paintRange, paintRanges } from './ranges';
 import { magicWandSelection } from './selection';
@@ -95,6 +103,7 @@ import type {
   Anchor,
   BlendMode,
   BrushSettings,
+  ColorMode,
   CurveChannel,
   CurvePoint,
   GradientOptions,
@@ -547,12 +556,17 @@ export class SuperPhotoEditor {
   private layerPropBeforeAll: Map<string, number> | null = null;
   private newDocRatioLock = false;
   private newDocRatio = 16 / 9;
+  private newDocColorMode: ColorMode = 'rgb';
   private resizeMode: 'image' | 'canvas' = 'image';
   private resizeRatioLock = true;
   private resizeRatio = 1;
   private resizeAnchor = { x: 0.5, y: 0.5 };
   private exportFormat: ExportFormat = 'png';
   private saving = false;
+  /** Portée choisie dans la fenêtre d'enregistrement du paquet. */
+  private saveScope: 'current' | 'all' = 'current';
+  /** Résolution en attente de la fenêtre « où ouvrir ce média ». */
+  private placementResolve: ((choice: 'current' | 'tab' | null) => void) | null = null;
 
   // ── Greffons ─────────────────────────────────────────────────────────────
   private pluginState = loadPluginState();
@@ -573,6 +587,8 @@ export class SuperPhotoEditor {
   private readonly resizeModal: HTMLElement;
   private readonly exportModal: HTMLElement;
   private readonly preferencesModal: HTMLElement;
+  private readonly saveModal: HTMLElement;
+  private readonly placementModal: HTMLElement;
   private readonly pluginPanel: HTMLElement;
   private readonly toastHost: HTMLElement;
 
@@ -589,6 +605,8 @@ export class SuperPhotoEditor {
     this.resizeModal = byId('resize-modal');
     this.exportModal = byId('export-modal');
     this.preferencesModal = byId('preferences-modal');
+    this.saveModal = byId('save-modal');
+    this.placementModal = byId('placement-modal');
     this.pluginPanel = byId('plugin-sidebar');
     this.toastHost = byId('toast-host');
 
@@ -622,6 +640,9 @@ export class SuperPhotoEditor {
     this.bindNewDocumentDialog();
     this.bindResizeDialog();
     this.bindExportDialog();
+    this.bindSaveDialog();
+    this.bindPlacementDialog();
+    this.bindColorMode();
     this.bindPreferences();
     this.bindPluginDialog();
     this.bindKeyboard();
@@ -873,11 +894,13 @@ export class SuperPhotoEditor {
       Math.round(dpi),
       background,
       t('new.untitled'),
+      this.newDocColorMode,
     );
     this.openTab(doc);
     this.closeNewDocumentDialog();
     this.setTool('select');
-    this.setMessage(t('msg.newDocument', { w: doc.width, h: doc.height }));
+    const mode = colorModeShort(doc.colorMode);
+    this.setMessage(`${t('msg.newDocument', { w: doc.width, h: doc.height })} · ${mode}`);
   }
 
   /** Crée un onglet pour un document et l'active. */
@@ -1734,14 +1757,16 @@ export class SuperPhotoEditor {
 
   private syncChrome(): void {
     const doc = this.doc;
+    const mode = colorModeShort(doc?.colorMode);
     this.setText('doc-name', doc?.name ?? t('tabs.none'));
     this.setText(
       'doc-meta',
-      doc ? `${doc.width} × ${doc.height} px · ${Math.round(doc.dpi)} ppp` : '—',
+      doc ? `${doc.width} × ${doc.height} px · ${Math.round(doc.dpi)} ppp · ${mode}` : '—',
     );
     this.setText('doc-size', doc ? `${doc.width} × ${doc.height} px` : '—');
     this.setText('doc-dpi', doc ? `${Math.round(doc.dpi)} ppp` : '—');
     this.setText('doc-layers', doc ? String(doc.layers.length) : '—');
+    this.setText('doc-profile', doc ? t(`mode.profile.${doc.colorMode ?? 'rgb'}`) : t('layers.profile'));
 
     const undo = this.node<HTMLButtonElement>('btn-undo');
     const redo = this.node<HTMLButtonElement>('btn-redo');
@@ -1751,6 +1776,7 @@ export class SuperPhotoEditor {
     redo.title = this.history.canRedo ? t('topbar.redoNamed', { name: this.history.redoLabel }) : t('topbar.redoTitle');
 
     this.node<HTMLButtonElement>('btn-export').disabled = !doc;
+    this.node<HTMLButtonElement>('btn-save').disabled = !doc;
     this.node<HTMLButtonElement>('btn-open').disabled = false;
 
     const hasDoc = Boolean(doc);
@@ -1764,6 +1790,7 @@ export class SuperPhotoEditor {
     this.node<HTMLInputElement>('layer-name').disabled = !hasDoc || !this.activeLayer;
 
     this.syncLayerProps();
+    this.syncColorMode();
     this.updateStatus();
   }
 
@@ -2579,6 +2606,7 @@ export class SuperPhotoEditor {
   private bindTopbar(): void {
     byId<HTMLButtonElement>('btn-new').addEventListener('click', () => this.openNewDocumentDialog());
     byId<HTMLButtonElement>('btn-open').addEventListener('click', () => void this.openImageFlow());
+    byId<HTMLButtonElement>('btn-save').addEventListener('click', () => this.openSaveDialog());
     byId<HTMLButtonElement>('btn-export').addEventListener('click', () => this.openExportDialog());
     byId<HTMLButtonElement>('btn-undo').addEventListener('click', () => this.undo());
     byId<HTMLButtonElement>('btn-redo').addEventListener('click', () => this.redo());
@@ -3552,6 +3580,9 @@ export class SuperPhotoEditor {
     switch (action) {
       case 'new-document':
         this.openNewDocumentDialog();
+        break;
+      case 'save-package':
+        this.openSaveDialog();
         break;
       case 'apply-crop':
         this.applyCrop();
@@ -5035,7 +5066,7 @@ export class SuperPhotoEditor {
           ? 'repeating-conic-gradient(#d6d6da 0% 25%, #f4f4f6 0% 50%) 0 0 / 12px 12px'
           : '#f2f2f4';
       byId('new-preview-label').textContent =
-        `${Math.round(w)} × ${Math.round(h)} px · ${Math.max(1, Math.round(Number(dpi.value) || 72))} ${t('common.dpi')}`;
+        `${Math.round(w)} × ${Math.round(h)} px · ${Math.max(1, Math.round(Number(dpi.value) || 72))} ${t('common.dpi')} · ${colorModeShort(this.newDocColorMode)}`;
     };
 
     const setPreset = (button: HTMLElement) => {
@@ -5093,6 +5124,16 @@ export class SuperPhotoEditor {
       });
     }
 
+    for (const button of this.newDocModal.querySelectorAll<HTMLElement>('[data-mode]')) {
+      button.addEventListener('click', () => {
+        this.newDocColorMode = (button.dataset.mode as ColorMode) ?? 'rgb';
+        for (const node of this.newDocModal.querySelectorAll('[data-mode]')) {
+          node.classList.toggle('is-active', node === button);
+        }
+        sync();
+      });
+    }
+
     byId<HTMLButtonElement>('new-create').addEventListener('click', () => {
       const w = clamp(Number(width.value) || 0, 1, 16384);
       const h = clamp(Number(height.value) || 0, 1, 16384);
@@ -5141,6 +5182,12 @@ export class SuperPhotoEditor {
     const lock = byId<HTMLButtonElement>('new-ratio-lock');
     lock.classList.toggle('is-active', this.newDocRatioLock);
     lock.setAttribute('aria-pressed', String(this.newDocRatioLock));
+    // RVB par défaut, comme demandé : le mode n'est pas mémorisé d'une fois sur
+    // l'autre, sinon un document créé en CMJN laisserait le suivant en CMJN.
+    this.newDocColorMode = 'rgb';
+    for (const node of this.newDocModal.querySelectorAll<HTMLElement>('[data-mode]')) {
+      node.classList.toggle('is-active', node.dataset.mode === 'rgb');
+    }
     this.closeCanvasMenu();
     this.newDocModal.classList.add('is-open');
     this.syncNewDocPreview();
@@ -5350,6 +5397,8 @@ export class SuperPhotoEditor {
     filename.value = `${sanitizeFilename(this.doc.name)}.png`;
     byId('export-dimensions').textContent =
       `${this.doc.width} × ${this.doc.height} px · ${Math.round(this.doc.dpi)} ${t('common.dpi')}`;
+    const profile = document.getElementById('export-profile');
+    if (profile) profile.textContent = t(`mode.profile.${this.doc.colorMode ?? 'rgb'}`);
     this.updateExportFormatUI();
     this.exportModal.classList.add('is-open');
     window.setTimeout(() => {
@@ -5423,6 +5472,260 @@ export class SuperPhotoEditor {
       this.saving = false;
       button.disabled = false;
       if (label) label.textContent = original;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Enregistrement d'un paquet `.spp`
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private bindSaveDialog(): void {
+    for (const button of this.saveModal.querySelectorAll<HTMLElement>('[data-scope]')) {
+      button.addEventListener('click', () => {
+        this.saveScope = button.dataset.scope === 'all' ? 'all' : 'current';
+        this.updateSaveUI();
+      });
+    }
+    byId<HTMLButtonElement>('save-run').addEventListener('click', () => void this.doSavePackage());
+    byId<HTMLButtonElement>('save-cancel').addEventListener('click', () => this.closeSaveDialog());
+    byId<HTMLButtonElement>('save-close').addEventListener('click', () => this.closeSaveDialog());
+    this.saveModal.addEventListener('click', (event) => {
+      if (event.target === this.saveModal) this.closeSaveDialog();
+    });
+    byId<HTMLInputElement>('save-filename').addEventListener('input', () => this.updateSaveUI());
+  }
+
+  private openSaveDialog(): void {
+    if (!this.doc) {
+      this.toast(t('save.noDocument'), 'error');
+      return;
+    }
+    if (this.adjustment) {
+      this.cancelAdjustment();
+      this.renderToolOptions();
+    }
+    this.closeCanvasMenu();
+    this.saveScope = 'current';
+    const base = sanitizeFilename(this.doc.name || 'superphoto');
+    byId<HTMLInputElement>('save-filename').value = `${base}.spp`;
+    this.updateSaveUI();
+    this.saveModal.classList.add('is-open');
+    window.setTimeout(() => {
+      const input = byId<HTMLInputElement>('save-filename');
+      input.focus();
+      input.setSelectionRange(0, input.value.length - 4);
+    }, 60);
+  }
+
+  private closeSaveDialog(): void {
+    this.saveModal.classList.remove('is-open');
+  }
+
+  /** Résumé vivant : ce qui partira dans le fichier. */
+  private updateSaveUI(): void {
+    for (const button of this.saveModal.querySelectorAll<HTMLElement>('[data-scope]')) {
+      button.classList.toggle('is-active', (button.dataset.scope === 'all') === (this.saveScope === 'all'));
+    }
+    const currentName = document.getElementById('save-current-name');
+    if (currentName) {
+      currentName.textContent = this.doc
+        ? `${this.doc.name} · ${this.doc.width} × ${this.doc.height}`
+        : t('save.none');
+    }
+    const allCount = document.getElementById('save-all-count');
+    if (allCount) allCount.textContent = t('save.tabCount', { n: this.tabs.length });
+    const allButton = this.saveModal.querySelector<HTMLButtonElement>('[data-scope="all"]');
+    if (allButton) allButton.disabled = this.tabs.length < 2;
+
+    const docs = this.saveScope === 'all' ? this.tabs.map((tab) => tab.doc) : this.doc ? [this.doc] : [];
+    const summary = document.getElementById('save-summary');
+    if (!summary) return;
+    const layers = docs.reduce((total, doc) => total + doc.layers.length, 0);
+    const masks = docs.reduce((total, doc) => total + doc.layers.filter((layer) => Boolean(layer.mask)).length, 0);
+    const pixels = docs.reduce((total, doc) => total + doc.width * doc.height, 0);
+    summary.innerHTML = `
+      <div><span>${escapeHtml(t('save.documents'))}</span><strong>${docs.length}</strong></div>
+      <div><span>${escapeHtml(t('save.layers'))}</span><strong>${layers}</strong></div>
+      <div><span>${escapeHtml(t('save.masks'))}</span><strong>${masks}</strong></div>
+      <div><span>${escapeHtml(t('save.pixels'))}</span><strong>${(pixels / 1_000_000).toFixed(1)} Mpx</strong></div>
+      <div class="save-mode-row"><span>${escapeHtml(t('save.modes'))}</span><strong>${escapeHtml(
+        [...new Set(docs.map((doc) => colorModeShort(doc.colorMode)))].join(' · ') || '—',
+      )}</strong></div>`;
+
+    // Le nom de fichier perd son extension dès qu'on la modifie : on la remet.
+    const filename = byId<HTMLInputElement>('save-filename');
+    if (!filename.value.toLowerCase().endsWith('.spp')) {
+      filename.value = `${stripExtension(filename.value.trim() || 'superphoto')}.spp`;
+    }
+  }
+
+  private async doSavePackage(): Promise<void> {
+    const doc = this.doc;
+    if (!doc || this.saving) return;
+    this.saving = true;
+    const button = byId<HTMLButtonElement>('save-run');
+    const label = button.querySelector('span');
+    const original = label?.textContent ?? '';
+    button.disabled = true;
+    if (label) label.textContent = t('save.busy');
+    try {
+      const docs = this.saveScope === 'all' ? this.tabs.map((tab) => tab.doc) : [doc];
+      const activeIndex = this.saveScope === 'all'
+        ? Math.max(0, this.tabs.findIndex((tab) => tab.id === this.activeTabId))
+        : 0;
+      const blob = await serializePackage(docs, activeIndex);
+      let filename = byId<HTMLInputElement>('save-filename').value.trim() || 'superphoto';
+      if (!filename.toLowerCase().endsWith('.spp')) filename = `${stripExtension(filename)}.spp`;
+      const saved = await saveExport(blob, filename, SPP_MIME);
+      if (saved) {
+        this.closeSaveDialog();
+        this.toast(t('save.done', { name: filename, n: docs.length }), 'success');
+        this.setMessage(t('save.doneShort', { name: filename }));
+      }
+    } catch (error) {
+      console.error(error);
+      this.toast(t('save.failed', { error: this.errorText(error) }), 'error');
+    } finally {
+      this.saving = false;
+      button.disabled = false;
+      if (label) label.textContent = original;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // « Où ouvrir ce média ? »
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private bindPlacementDialog(): void {
+    for (const button of this.placementModal.querySelectorAll<HTMLElement>('[data-placement]')) {
+      button.addEventListener('click', () => {
+        if (button.hasAttribute('disabled')) return;
+        this.resolvePlacement(button.dataset.placement === 'current' ? 'current' : 'tab');
+      });
+    }
+    byId<HTMLButtonElement>('placement-cancel').addEventListener('click', () => this.resolvePlacement(null));
+    byId<HTMLButtonElement>('placement-close').addEventListener('click', () => this.resolvePlacement(null));
+    this.placementModal.addEventListener('click', (event) => {
+      if (event.target === this.placementModal) this.resolvePlacement(null);
+    });
+  }
+
+  private resolvePlacement(choice: 'current' | 'tab' | null): void {
+    this.placementModal.classList.remove('is-open');
+    const resolve = this.placementResolve;
+    this.placementResolve = null;
+    resolve?.(choice);
+  }
+
+  /**
+   * Demande où placer un média ouvert. Sans document ouvert, la question n'a
+   * pas de sens : on renvoie directement « nouvel onglet ».
+   */
+  private askPlacement(name: string, multiple = false): Promise<'current' | 'tab' | null> {
+    if (!this.doc) return Promise.resolve('tab');
+    if (this.placementResolve) this.resolvePlacement(null);
+    const title = document.getElementById('placement-subtitle');
+    if (title) {
+      title.textContent = multiple
+        ? t('place.subtitleMultiple', { n: name })
+        : t('place.subtitle', { name });
+      title.dataset.i18n = '';
+    }
+    const current = this.placementModal.querySelector<HTMLButtonElement>('[data-placement="current"]');
+    if (current) {
+      // Plusieurs fichiers d'un coup : « remplacer l'onglet » n'aurait pas de
+      // sens, on le désactive plutôt que de n'en garder qu'un.
+      current.disabled = multiple;
+      current.classList.toggle('is-disabled', multiple);
+    }
+    for (const button of this.placementModal.querySelectorAll<HTMLElement>('[data-placement]')) {
+      button.classList.toggle('is-active', button.dataset.placement === 'tab');
+    }
+    this.placementModal.classList.add('is-open');
+    return new Promise((resolve) => {
+      this.placementResolve = resolve;
+    });
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Mode chromatique du document
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private bindColorMode(): void {
+    for (const button of document.querySelectorAll<HTMLElement>('[data-color-mode]')) {
+      button.addEventListener('click', () => {
+        this.setDocumentColorMode((button.dataset.colorMode as ColorMode) ?? 'rgb');
+      });
+    }
+  }
+
+  private setDocumentColorMode(mode: ColorMode): void {
+    const doc = this.doc;
+    if (!doc) {
+      this.toast(t('mode.noDocument'), 'info');
+      return;
+    }
+    const from = doc.colorMode ?? 'rgb';
+    if (from === mode) return;
+    if (this.adjustment) {
+      this.cancelAdjustment();
+      this.renderToolOptions();
+    }
+    // Instantané complet : la conversion écrase des couleurs, l'annulation doit
+    // rendre les pixels d'origine, pas seulement le drapeau du mode.
+    const snapshot = doc.layers.map((layer) => ({
+      layer,
+      canvas: cloneCanvas(layer.canvas),
+      kind: layer.kind,
+      text: layer.text ? deepClone(layer.text) : undefined,
+      path: layer.path ? deepClone(layer.path) : undefined,
+    }));
+    const changed = convertDocumentMode(doc, mode);
+    const label = t('mode.convertLabel', { from: colorModeShort(from), to: colorModeShort(mode) });
+    this.history.push({
+      label,
+      undo: () => {
+        for (const entry of snapshot) {
+          entry.layer.canvas = entry.canvas;
+          entry.layer.kind = entry.kind;
+          entry.layer.text = entry.text;
+          entry.layer.path = entry.path;
+        }
+        doc.colorMode = from;
+        this.invalidateBounds();
+        this.layersDirty = true;
+        this.renderAll();
+        this.renderToolOptions();
+        this.syncChrome();
+      },
+      redo: () => {
+        convertDocumentMode(doc, mode);
+        this.invalidateBounds();
+        this.layersDirty = true;
+        this.renderAll();
+        this.renderToolOptions();
+        this.syncChrome();
+      },
+    });
+    this.invalidateBounds();
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.syncChrome();
+    this.setMessage(changed ? t('mode.converted', { mode: colorModeShort(mode) }) : t('mode.samePixels'));
+  }
+
+  private syncColorMode(): void {
+    const mode = this.doc?.colorMode ?? 'rgb';
+    for (const button of document.querySelectorAll<HTMLElement>('[data-color-mode]')) {
+      button.classList.toggle('is-active', button.dataset.colorMode === mode);
+      if (button instanceof HTMLButtonElement) button.disabled = !this.doc;
+    }
+    const note = document.getElementById('color-mode-note');
+    if (note) {
+      note.textContent = this.doc
+        ? t('mode.noteActive', { mode: colorModeShort(mode) })
+        : t('mode.note');
     }
   }
 
@@ -7845,6 +8148,16 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
+        if (this.saveModal.classList.contains('is-open')) {
+          this.closeSaveDialog();
+          event.preventDefault();
+          return;
+        }
+        if (this.placementModal.classList.contains('is-open')) {
+          this.resolvePlacement(null);
+          event.preventDefault();
+          return;
+        }
         if (this.preferencesModal.classList.contains('is-open')) {
           this.closePreferences(true);
           event.preventDefault();
@@ -7918,7 +8231,9 @@ export class SuperPhotoEditor {
         }
         if (key === 's') {
           event.preventDefault();
-          this.openExportDialog();
+          // Ctrl+Maj+S : paquet .spp ; Ctrl+S : export de l'image à plat.
+          if (event.shiftKey) this.openSaveDialog();
+          else this.openExportDialog();
           return;
         }
         if (key === ',') {
@@ -8338,13 +8653,17 @@ export class SuperPhotoEditor {
 
   /** Ouvre une liste de fichiers venus du bureau (web ou webview). */
   private async openDroppedFiles(files: File[]): Promise<void> {
+    let placement: 'ask' | 'tab' = files.length === 1 ? 'ask' : 'tab';
     for (const file of files) {
-      if (!isSupportedMedia(file) && !looksLikeProject(file.name)) {
+      if (!isSupportedMedia(file) && !looksLikeProject(file.name) && !looksLikePackage(file.name)) {
         this.toast(t('drop.unsupported', { name: file.name }), 'error');
         continue;
       }
       try {
-        await this.openFileBlob(file.name, file);
+        // La question n'est posée qu'une fois, pour le premier média : au-delà,
+        // les fichiers suivants ouvrent chacun leur onglet.
+        await this.openFileBlob(file.name, file, placement, files.length > 1);
+        if (placement === 'ask') placement = 'tab';
       } catch (error) {
         this.toast(t('msg.imageUnreadable', { error: this.errorText(error) }), 'error');
         console.warn(error);
@@ -8353,10 +8672,12 @@ export class SuperPhotoEditor {
   }
 
   private async openNativePaths(paths: string[]): Promise<void> {
+    let placement: 'ask' | 'tab' = paths.length === 1 ? 'ask' : 'tab';
     for (const path of paths) {
       try {
         const opened = await readNativeImage(path);
-        await this.openFileBlob(opened.name, opened.blob);
+        await this.openFileBlob(opened.name, opened.blob, placement, paths.length > 1);
+        placement = 'tab';
       } catch (error) {
         this.toast(t('msg.imageUnreadable', { error: this.errorText(error) }), 'error');
         console.warn(error);
@@ -8369,10 +8690,22 @@ export class SuperPhotoEditor {
   }
 
   /**
-   * Un seul point d'entrée pour tous les médias : projet `.sps`, image de
-   * n'importe quel format décodable, ou vidéo (première image).
+   * Un seul point d'entrée pour tous les médias : paquet `.spp`, projet `.sps`,
+   * image de n'importe quel format décodable, ou vidéo (première image).
+   *
+   * `placement` vaut `'ask'` quand l'utilisateur doit choisir entre le plan de
+   * travail courant et un nouvel onglet.
    */
-  private async openFileBlob(name: string, blob: Blob): Promise<void> {
+  private async openFileBlob(
+    name: string,
+    blob: Blob,
+    placement: 'ask' | 'tab' | 'current' = 'ask',
+    multiple = false,
+  ): Promise<void> {
+    if (looksLikePackage(name) || blob.type === SPP_MIME) {
+      await this.openPackageBlob(name, blob);
+      return;
+    }
     if (looksLikeProject(name) || blob.type === SPS_MIME) {
       const doc = await parseProject(blob);
       this.openTab(doc);
@@ -8383,7 +8716,38 @@ export class SuperPhotoEditor {
     if (!isSupportedMedia({ name, type: blob.type })) {
       throw new Error(t('drop.unsupported', { name }));
     }
-    await this.loadImageBlob(blob, name);
+    let target: 'current' | 'tab' = placement === 'current' ? 'current' : 'tab';
+    if (placement === 'ask') {
+      const choice = await this.askPlacement(name, multiple);
+      if (!choice) return;
+      target = choice;
+    }
+    await this.loadImageBlob(blob, name, target);
+  }
+
+  /** Ouvre une archive `.spp` : un onglet par document qu'elle contient. */
+  private async openPackageBlob(name: string, blob: Blob): Promise<void> {
+    if (!(await isSuperPhotoPackage(blob))) {
+      throw new Error(t('pkg.notPackage'));
+    }
+    const opened = await parsePackage(blob);
+    this.closeNewDocumentDialog();
+    let active: string | null = null;
+    for (let index = 0; index < opened.docs.length; index += 1) {
+      const doc = opened.docs[index];
+      if (!doc) continue;
+      const tab = this.openTab(doc, false);
+      if (index === opened.activeIndex) active = tab.id;
+    }
+    if (active) this.activateTab(active);
+    else {
+      const last = this.tabs[this.tabs.length - 1];
+      if (last) this.activateTab(last.id);
+    }
+    this.toast(
+      t('pkg.opened', { name: stripExtension(name) || name, n: opened.docs.length }),
+      'success',
+    );
   }
 
   private bindTabs(): void {
@@ -8461,14 +8825,22 @@ export class SuperPhotoEditor {
     try {
       const opened = await openImages();
       if (opened.length === 0) return;
-      for (const item of opened) await this.openFileBlob(item.name, item.blob);
+      let placement: 'ask' | 'tab' = opened.length === 1 ? 'ask' : 'tab';
+      for (const item of opened) {
+        await this.openFileBlob(item.name, item.blob, placement, opened.length > 1);
+        placement = 'tab';
+      }
     } catch (error) {
       console.error(error);
       this.toast(t('msg.openFailed', { error: this.errorText(error) }), 'error');
     }
   }
 
-  private async loadImageBlob(blob: Blob, name: string): Promise<void> {
+  private async loadImageBlob(
+    blob: Blob,
+    name: string,
+    target: 'current' | 'tab' = 'tab',
+  ): Promise<void> {
     const media = await decodeMedia(blob, name);
     try {
       let width = media.width;
@@ -8489,15 +8861,54 @@ export class SuperPhotoEditor {
         height,
         dpi: 72,
         background: 'transparent',
+        colorMode: 'rgb',
         layers: [layer],
         activeLayerId: layer.id,
       };
-      this.openTab(doc);
+      if (target === 'current' && this.tab) this.replaceActiveTabDocument(doc);
+      else this.openTab(doc);
       this.closeNewDocumentDialog();
       this.toast(t('msg.opened', { name: doc.name, w: width, h: height }), 'success');
     } finally {
       media.release();
     }
+  }
+
+  /**
+   * Remplace le document de l'onglet actif sans toucher au reste de la session :
+   * c'est le choix « dans le plan de travail » à l'ouverture d'un média.
+   */
+  private replaceActiveTabDocument(doc: PhotoDoc): void {
+    const tab = this.tab;
+    if (!tab) {
+      this.openTab(doc);
+      return;
+    }
+    this.cancelAdjustment();
+    this.drag = null;
+    this.pendingCrop = null;
+    this.patchSourceRect = null;
+    this.stampSource = null;
+    this.pointerInside = false;
+    this.adjustment = null;
+    this.textEditBefore.clear();
+    this.selectedLayerIds = new Set([doc.activeLayerId]);
+    this.nudge = null;
+    tab.doc = doc;
+    tab.history = new History(() => {
+      if (this.activeTabId === tab.id) this.syncChrome();
+    });
+    tab.selection = null;
+    tab.maskCache = null;
+    tab.coverageCache = null;
+    tab.scroll = null;
+    tab.fitMode = true;
+    tab.zoom = 1;
+    this.statusCache.clear();
+    // `activateTab` remet la toile à la bonne taille, recalcule le zoom et
+    // redessine : rien à dupliquer ici. Les lignes de calques de l'ancien
+    // document sont retirées par `renderLayers` (identifiants disparus).
+    this.activateTab(tab.id, { skipSave: true });
   }
 
   private undo(): void {

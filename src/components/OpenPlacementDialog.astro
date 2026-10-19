@@ -1,0 +1,46 @@
+---
+import BrandMark from './BrandMark.astro';
+---
+<div class="modal-backdrop" id="placement-modal" role="presentation">
+  <div class="dialog placement-dialog" role="dialog" aria-modal="true" aria-labelledby="placement-title">
+    <header class="dialog-head compact">
+      <div class="dialog-kicker">
+        <span class="kicker-mark"><BrandMark decorative /></span>
+        SUPERPHOTO
+      </div>
+      <h2 id="placement-title" data-i18n="place.title">Where should it open?</h2>
+      <p id="placement-subtitle" data-i18n="place.subtitle">A document is already open.</p>
+      <button class="dialog-close" id="placement-close" aria-label="Close" data-i18n-aria="common.close">
+        <svg viewBox="0 0 24 24"><use href="#i-close"></use></svg>
+      </button>
+    </header>
+
+    <div class="dialog-body">
+      <div class="placement-choices" id="placement-choices">
+        <button class="placement-card" data-placement="current">
+          <span class="placement-icon"><svg viewBox="0 0 24 24"><use href="#i-image-size"></use></svg></span>
+          <span class="placement-text">
+            <strong data-i18n="place.current">In the current workspace</strong>
+            <small data-i18n="place.currentHint">Replaces the document of the active tab.</small>
+          </span>
+        </button>
+        <button class="placement-card is-active" data-placement="tab">
+          <span class="placement-icon"><svg viewBox="0 0 24 24"><use href="#i-layers"></use></svg></span>
+          <span class="placement-text">
+            <strong data-i18n="place.tab">In a new tab</strong>
+            <small data-i18n="place.tabHint">Keeps everything that is already open.</small>
+          </span>
+        </button>
+      </div>
+      <p class="dialog-note" data-i18n="place.note">
+        Both choices keep the full resolution. The current workspace discards the
+        tab history, so save it first if you need it.
+      </p>
+    </div>
+
+    <footer class="dialog-foot">
+      <div class="foot-spacer"></div>
+      <button class="btn ghost" id="placement-cancel" data-i18n="common.cancel">Cancel</button>
+    </footer>
+  </div>
+</div>

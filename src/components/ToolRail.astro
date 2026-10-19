@@ -104,6 +104,19 @@
       </div>
     </div>
 
+    <!-- Options de l'outil en cours : juste sous Zoom et Main, là où l'œil
+         revient après avoir choisi un outil. Les réglages d'image restent
+         plus bas, dans leur propre groupe. -->
+    <div class="tool-options" id="tool-options">
+      <div class="options-head">
+        <span class="eyebrow" data-i18n="opt.options">Options</span>
+        <h3 id="tool-options-title">Select</h3>
+      </div>
+      <div class="options-body" id="tool-options-body">
+        <p class="options-hint">Select a tool.</p>
+      </div>
+    </div>
+
     <div class="tool-group">
       <div class="section-title" data-i18n="opt.image">Image</div>
       <div class="wide-tool-list">
@@ -116,6 +129,22 @@
           <span data-i18n="resize.canvasTitle">Canvas size</span>
         </button>
       </div>
+
+      <div class="section-title" data-i18n="mode.title">Colour mode</div>
+      <div class="mode-switch" id="color-mode-switch" role="group" aria-labelledby="color-mode-label">
+        <button class="mode-btn is-active" data-color-mode="rgb" title="RGB" data-i18n-title="mode.rgbHint">
+          <span data-i18n="mode.rgb">RGB</span>
+        </button>
+        <button class="mode-btn" data-color-mode="cmyk" title="CMYK" data-i18n-title="mode.cmykHint">
+          <span data-i18n="mode.cmyk">CMYK</span>
+        </button>
+        <button class="mode-btn" data-color-mode="gray" title="Grayscale" data-i18n-title="mode.grayHint">
+          <span data-i18n="mode.gray">B&amp;W</span>
+        </button>
+      </div>
+      <p class="mode-note" id="color-mode-note" data-i18n="mode.note">
+        Converting to CMYK or grayscale clamps colours. Going back does not restore them.
+      </p>
     </div>
 
     <div class="tool-group">
@@ -141,16 +170,6 @@
           <svg viewBox="0 0 24 24"><use href="#i-curves"></use></svg>
           <span data-i18n="adjust.curves">Curves</span>
         </button>
-      </div>
-    </div>
-
-    <div class="tool-options" id="tool-options">
-      <div class="options-head">
-        <span class="eyebrow" data-i18n="opt.options">Options</span>
-        <h3 id="tool-options-title">Select</h3>
-      </div>
-      <div class="options-body" id="tool-options-body">
-        <p class="options-hint">Select a tool.</p>
       </div>
     </div>
   </div>

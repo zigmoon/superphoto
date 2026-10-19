@@ -9,7 +9,7 @@
  * octets sont du JSON, ce qui permet d'identifier un `.sps` même quand le
  * serveur FTP sert le fichier en `application/octet-stream`.
  */
-import type { BlendMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
+import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
 import { base64ToBlob, blobToBase64, canvasContext, canvasToBlob, createCanvas } from './utils';
 
 export const SPS_MIME = 'application/x-superphoto';
@@ -32,7 +32,7 @@ interface SpsLayer {
   mask?: string | null;
 }
 
-export interface SpsFile {
+interface SpsFile {
   format: 'superphoto';
   version: number;
   app: string;
@@ -42,6 +42,8 @@ export interface SpsFile {
   height: number;
   dpi: number;
   background: PhotoDoc['background'];
+  /** Absent des projets enregistrés avant la 0.2.4 : RVB par défaut. */
+  colorMode?: ColorMode;
   activeLayerId: string;
   layers: SpsLayer[];
 }
@@ -78,6 +80,7 @@ export async function serializeProject(doc: PhotoDoc): Promise<Blob> {
     height: doc.height,
     dpi: doc.dpi,
     background: doc.background,
+    colorMode: doc.colorMode ?? 'rgb',
     activeLayerId: doc.activeLayerId,
     layers,
   };
@@ -139,6 +142,7 @@ export async function parseProject(blob: Blob): Promise<PhotoDoc> {
     height,
     dpi: Number(raw.dpi) || 72,
     background: raw.background ?? 'transparent',
+    colorMode: raw.colorMode ?? 'rgb',
     layers,
     activeLayerId: layers.some((layer) => layer.id === raw.activeLayerId)
       ? raw.activeLayerId
