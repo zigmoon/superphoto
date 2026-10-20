@@ -21,6 +21,8 @@ previews — built with Astro 7 and Rust (Tauri 2) for Windows, macOS and Linux.
 
 [![Download the app](https://img.shields.io/badge/%E2%AC%87%20Download%20the%20app-000000?style=for-the-badge)](https://github.com/zigmoon/superphoto/releases)
 
+<img src=".github/screenshot-dark.png" alt="SuperPhoto in dark theme: the Apollo 17 photograph of the Earth on the canvas, the layer stack on the left and the Curves adjustment with its live preview, histogram and S-curve on the right" width="1120">
+
 </div>
 
 ---
@@ -583,6 +585,7 @@ behind it.
 | `public/brand/mark-light.svg`, `mark-dark.svg` | aliases of `mark.svg` for `<img>`, e-mail and press use |
 | `.github/brand-logo-light.png` | README header on a light page |
 | `.github/brand-logo-dark.png` | README header on a dark page |
+| `.github/screenshot-dark.png` | README hero shot: dark theme, Earth photo, Curves panel (2000 × 1202, 277 KB) |
 | `public/brand/app-icon.svg`, `icon-*.png` | PWA and store icons |
 | `public/brand/og-image.png` | 1200 × 630 social card |
 
@@ -638,3 +641,7 @@ Press `F1` (or `?`) anywhere to open the full, always up-to-date list.
 ## License
 
 [MIT](LICENSE) — SuperPhoto / SuperPrint.
+
+The screenshot at the top of this page shows
+[*The Earth seen from Apollo 17*](https://commons.wikimedia.org/wiki/File:The_Earth_seen_from_Apollo_17.jpg),
+a NASA photograph in the public domain.

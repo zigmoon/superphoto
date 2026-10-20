@@ -659,7 +659,22 @@ export class SuperPhotoEditor {
     applyPreferences(this.preferences);
     watchSystemTheme();
     initRangePaint();
-    window.addEventListener('resize', () => this.invalidateDisplayRect(), { passive: true });
+    window.addEventListener(
+      'resize',
+      () => {
+        this.invalidateDisplayRect();
+        // En mode « ajuster à la fenêtre », la toile doit suivre la nouvelle
+        // taille : sans ce rappel, redimensionner laissait l'image petite au
+        // milieu d'un stage vide. La mesure est prise à la frame suivante pour
+        // ne pas lire une largeur de vue encore périmée.
+        if (this.fitMode && this.doc) {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => this.fitToView());
+          });
+        }
+      },
+      { passive: true },
+    );
     // Les panneaux, la barre d'onglets et le plein écran déplacent la toile sans
     // provoquer d'événement `resize` : sans observateur, le rectangle mémorisé
     // restait périmé et chaque clic tombait quelques pixels à côté.
