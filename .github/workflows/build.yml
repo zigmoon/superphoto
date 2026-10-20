@@ -23,9 +23,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── 1. Version web : le dossier à poser par FTP ───────────────────────────
+  # ── 1. Version web : validée à chaque build, jamais publiée ───────────────
+  # Le zip web n'est pas distribué sur GitHub : il ne sert qu'à un envoi FTP
+  # personnel, et se fabrique en local avec `npm run build:web:zip`. La CI se
+  # contente donc de construire le dossier pour détecter toute régression des
+  # liens relatifs, sans conserver d'artefact téléchargeable.
   web:
-    name: Web (FTP)
+    name: Web (FTP, non publiée)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,14 +48,6 @@ jobs:
 
       - name: Construire la version web (liens relatifs + zip)
         run: npm run build:web:zip
-
-      - name: Publier le zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: superphoto-web
-          path: superphoto-web.zip
-          if-no-files-found: error
-          retention-days: 90
 
   # ── 2. Applications de bureau : Windows, Linux, macOS ─────────────────────
   desktop:
@@ -249,8 +245,9 @@ jobs:
       - name: Aplatir l'arborescence
         run: |
           mkdir -p release
+          # Aucun `.zip` : la version web n'est pas distribuée sur GitHub.
           find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.deb' \
-            -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.zip' \) \
+            -o -name '*.AppImage' -o -name '*.dmg' \) \
             -exec cp {} release/ \;
           ls -lh release
 
@@ -305,10 +302,14 @@ jobs:
             | Windows | `SuperPhoto-Windows-x64-setup.exe` (NSIS) |
             | Linux | `SuperPhoto-Linux-amd64.deb`, `SuperPhoto-Linux-x86_64.AppImage` |
             | macOS (Apple Silicon + Intel) | `SuperPhoto-macOS-universal.dmg` |
-            | Web / FTP | `superphoto-web.zip` — unzip at the root of your site |
 
             The versioned files (`SuperPhoto_<version>_*`) are kept alongside the
             stable names used by the README quick-download links.
+
+            The web build is not attached: it is a static folder meant for a
+            personal FTP deploy, and is produced locally with
+            `npm run build:web:zip`. The hosted editor lives at
+            <https://app.zigmoon.com/superphoto/>.
 
             ### Verify your download
 

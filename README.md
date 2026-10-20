@@ -33,10 +33,11 @@ One click, always the newest build — the links below point at the latest relea
 | **macOS (Apple Silicon + Intel)** | [`SuperPhoto-macOS-universal.dmg`](https://github.com/zigmoon/superphoto/releases/latest/download/SuperPhoto-macOS-universal.dmg) | Universal binary |
 | **Linux (x86_64) — AppImage** | [`SuperPhoto-Linux-x86_64.AppImage`](https://github.com/zigmoon/superphoto/releases/latest/download/SuperPhoto-Linux-x86_64.AppImage) | `chmod +x` then run |
 | **Linux (amd64) — Debian/Ubuntu** | [`SuperPhoto-Linux-amd64.deb`](https://github.com/zigmoon/superphoto/releases/latest/download/SuperPhoto-Linux-amd64.deb) | `sudo apt install ./SuperPhoto-Linux-amd64.deb` |
-| **Web build (static)** | [`superphoto-web.zip`](https://github.com/zigmoon/superphoto/releases/latest/download/superphoto-web.zip) | Upload the contents anywhere |
 
-Nothing to install to try it: the editor also runs straight from the browser at
-**<https://app.zigmoon.com/superphoto/>**.
+Nothing to install to try the editor: it also runs straight in the browser at
+**<https://app.zigmoon.com/superphoto/>**. The static web build is **not**
+published on GitHub — it is produced locally, in one command, for an FTP deploy
+(see [Deploy on your own server](#deploy-on-your-own-server-ftp)).
 
 <sub>Windows SmartScreen and macOS Gatekeeper show a warning on first launch
 because the builds are not code-signed yet: **More info → Run anyway**, or
@@ -358,6 +359,9 @@ ink simulation as the colour-mode switch.
 
 ## Deploy on your own server (FTP)
 
+The web build is a local artefact: it is **not** attached to any GitHub release,
+and CI never publishes it. Build it yourself and send it over FTP.
+
 ```bash
 npm install
 npm run build:web:zip      # produces dist/ + superphoto-web.zip
@@ -443,11 +447,11 @@ npm run brand:png      # rasterize the icons, favicon and social card
 
 | Job | Output |
 | --- | --- |
-| **Web (FTP)** | `superphoto-web.zip` |
+| **Web (validation)** | builds the FTP folder to catch relative-link regressions; **no artefact kept** |
 | **Windows x64** | `SuperPhoto_<version>_x64-setup.exe` |
 | **Linux x64** | `.deb` + `.AppImage` |
 | **macOS universal** | `SuperPhoto_<version>_universal.dmg` (Apple Silicon + Intel) |
-| **Release GitHub** | on a `v*` tag: every file above, plus stable names for the README links |
+| **Release GitHub** | on a `v*` tag: the desktop installers, plus stable names for the README links |
 
 Releasing is just `git tag v0.2.3 && git push origin v0.2.3`.
 
