@@ -47,15 +47,17 @@ export function createDocument(
 ): PhotoDoc {
   const layers: Layer[] = [];
   if (background !== 'transparent') {
-    layers.push(
-      createLayer(
-        t('layers.background'),
-        width,
-        height,
-        'raster',
-        background === 'white' ? '#ffffff' : '#000000',
-      ),
+    const backgroundLayer = createLayer(
+      t('layers.background'),
+      width,
+      height,
+      'raster',
+      background === 'white' ? '#ffffff' : '#000000',
     );
+    // Comme dans Photoshop : le fond est verrouillé à la création. On le
+    // déverrouille d'un clic sur le cadenas, ou on duplique le calque.
+    backgroundLayer.locked = true;
+    layers.push(backgroundLayer);
   }
   const paintLayer = createLayer(`${t('layers.placeholder')} 1`, width, height, 'raster');
   layers.push(paintLayer);

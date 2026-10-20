@@ -1,22 +1,22 @@
 ---
 /**
- * Marque officielle SuperPhoto (logo déposé à la racine du projet, nettoyé puis
- * vectorisé par `npm run brand`). Le SVG est **inliné** : aucune requête réseau,
- * et le chemin reste valable quand la version web est posée dans un
- * sous-dossier par FTP.
+ * Marque officielle SuperPhoto.
+ *
+ * Le SVG vient de `scripts/brand.mjs`, qui recopie à l'identique le calque
+ * visible de `super_photo_blanc.svg` (plaques blanches + anneaux sombres). Il est
+ * **inliné** : aucune requête réseau, et le chemin reste valable quand la version
+ * web est posée dans un sous-dossier par FTP.
+ *
+ * L'original ne contient aucun `id` : plusieurs instances peuvent donc coexister
+ * dans la page sans se marcher dessus.
  */
 import iconSource from '../assets/brand/app-icon.svg?raw';
 
 const viewBox = /viewBox="([^"]*)"/.exec(iconSource)?.[1] ?? '0 0 500 500';
-
-// Le SVG est inliné plusieurs fois dans la page (barre, état vide, fenêtres) :
-// les masques de détourage reçoivent un préfixe unique par instance pour rester
-// valides (un `id` ne peut apparaître qu'une fois dans le document).
-const suffix = Math.random().toString(36).slice(2, 8);
 const inner = iconSource
+  .replace(/<title>[^<]*<\/title>/, '')
   .replace(/^[\s\S]*?<svg[^>]*>/, '')
   .replace(/<\/svg>\s*$/, '')
-  .replace(/\bsp-ko\b/g, `sp-ko-${suffix}`)
   .trim();
 
 interface Props {

@@ -1,9 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset=".github/brand-logo-black.png">
-  <img src=".github/brand-logo-white.png" alt="SuperPhoto" width="320">
-</picture>
+<img src=".github/brand-logo.png" alt="SuperPhoto" width="260">
 
 # SuperPhoto
 
@@ -17,7 +14,7 @@ previews — built with Astro 7 and Rust (Tauri 2) for Windows, macOS and Linux.
 [![Astro](https://img.shields.io/badge/Astro-7-ff5d01?style=flat-square&logo=astro&logoColor=white)](https://astro.build)
 [![Rust](https://img.shields.io/badge/Rust-Tauri%202-000000?style=flat-square&logo=rust&logoColor=white)](https://tauri.app)
 
-**[Download](#download) · [Features](#features) · [Web / FTP](#deploy-on-your-own-server-ftp) · [Build from source](#build-from-source)**
+**[Launch the web app](https://app.zigmoon.com/superphoto/) · [Download](#download) · [Features](#features) · [Web / FTP](#deploy-on-your-own-server-ftp) · [Build from source](#build-from-source)**
 
 </div>
 
@@ -34,6 +31,9 @@ One click, always the newest build — the links below point at the latest relea
 | **Linux (x86_64) — AppImage** | [`SuperPhoto-Linux-x86_64.AppImage`](https://github.com/zigmoon/superphoto/releases/latest/download/SuperPhoto-Linux-x86_64.AppImage) | `chmod +x` then run |
 | **Linux (amd64) — Debian/Ubuntu** | [`SuperPhoto-Linux-amd64.deb`](https://github.com/zigmoon/superphoto/releases/latest/download/SuperPhoto-Linux-amd64.deb) | `sudo apt install ./SuperPhoto-Linux-amd64.deb` |
 | **Web build (static)** | [`superphoto-web.zip`](https://github.com/zigmoon/superphoto/releases/latest/download/superphoto-web.zip) | Upload the contents anywhere |
+
+Nothing to install to try it: the editor also runs straight from the browser at
+**<https://app.zigmoon.com/superphoto/>**.
 
 <sub>Windows SmartScreen and macOS Gatekeeper show a warning on first launch
 because the builds are not code-signed yet: **More info → Run anyway**, or
@@ -75,6 +75,8 @@ from the [releases page](https://github.com/zigmoon/superphoto/releases).
 - **Tabbed documents**, Photoshop-style, right above the preview: every image
   or project opens in its own tab, each with its own undo history, selection,
   zoom and scroll position.
+- **Photoshop documents**: `.psd` opens with its layers, masks, opacity, blend
+  modes and resolution — and exports back to a layered `.psd`.
 - Close a tab with its **×**, a middle click, or `Ctrl/⌘ + W` on the last one.
 - **Autosave**: every open tab is stored in the browser (IndexedDB) after each
   change — closing the tab no longer loses the work.
@@ -111,7 +113,9 @@ Delete, duplicate, reorder and the opacity slider then apply to all of them.
 **Lock** a layer with the padlock on the right of its row (or `Ctrl+/`). A locked
 layer can still be selected, but it refuses painting, moving, resizing, filling,
 adjustments, merging, deletion and reordering — its transform box is drawn dashed,
-without handles.
+without handles. Every new document opens with its **Background** layer already
+locked, exactly like Photoshop, so the backdrop cannot be painted over by
+accident; unlock it if you really mean to.
 
 **Layer masks** work like Photoshop's: add, paint, disable, re-enable, apply to
 pixels or remove.
@@ -314,10 +318,26 @@ pixels, the same way Photoshop's mode conversion works:
 | **PNG** | Transparency, lossless |
 | **JPEG** | Flattened on white, quality slider |
 | **WebP** | Transparency, quality slider |
+| **TIFF** | Uncompressed baseline, resolution tag, RGB / RGBA / gray |
+| **EPS** | EPSF-3.0, flattened on white, vector-safe hex image data |
+| **PSD** | **Layered** Photoshop file: one RLE layer per layer, masks, opacity, blend modes, DPI |
 | **`.sps`** | **Everything**: layers, masks, opacity, blend modes, text and paths stay editable |
+| **`.spp`** | The package format: a ZIP with a manifest, per-document JSON and PNG layers |
 
 A `.sps` file is a single, self-contained JSON manifest with PNG-encoded
 layers — reopen it in SuperPhoto, or drop it on the window like any image.
+`.spp` and PSD round-trip through other software: the exported PSD opens in
+Photoshop, Affinity Photo and GIMP with its layers intact.
+
+### Importing Photoshop files
+
+`Open` (or a drop) accepts **PSD** directly: 8-bit and 16-bit, RGB, CMYK and
+grayscale, every layer with its name, opacity, blend mode, mask and the
+document's DPI (`Image → Image size` shows the real resolution). Layer groups
+are flattened into their parent, as SuperPhoto keeps a flat layer stack.
+CMYK documents are converted to the RGB working space on import, using the same
+ink simulation as the colour-mode switch.
+
 
 ### Interface
 
@@ -347,11 +367,30 @@ recompilation is needed. The bundle includes:
 ```
 index.html   .htaccess   favicon.svg   favicon-32.png
 apple-touch-icon.png     site.webmanifest
+robots.txt   sitemap.xml   llms.txt
 assets/      brand/
 ```
 
 `.htaccess` sets MIME types, compression and cache headers. Preview the exact
 build locally with `npm run preview:web` (served at `http://localhost:8400/app/`).
+
+SuperPhoto is live at **<https://app.zigmoon.com/superphoto/>**. Three files
+handle discoverability, and all three carry that address:
+
+- `robots.txt` — allows every crawler and points at the sitemap.
+- `sitemap.xml` — the single page, with the Open Graph card as its image.
+- `llms.txt` — a plain-text brief for language models: what the editor does,
+  which formats it reads and writes, and the answers to the usual questions
+  (“is it free”, “are my files uploaded”). The page also links it with
+  `<link rel="alternate" type="text/plain">`, and embeds a
+  `SoftwareApplication` JSON-LD block for rich results.
+
+Publishing elsewhere? Set the canonical URL at build time — it feeds
+`<link rel="canonical">`, `og:url`, `og:image` and the JSON-LD block:
+
+```bash
+PUBLIC_SITE_URL=https://example.com/photo/ npm run build:web:zip
+```
 
 The build prints the **SHA-256 of the zip**. After the FTP transfer, compare it
 with the file on the server to be sure nothing was truncated:

@@ -23,6 +23,7 @@ interface SpsLayer {
   visible: boolean;
   opacity: number;
   blend: BlendMode;
+  locked?: boolean;
   maskEnabled?: boolean;
   maskEditing?: boolean;
   text?: TextData;
@@ -62,6 +63,7 @@ export async function serializeProject(doc: PhotoDoc): Promise<Blob> {
       visible: layer.visible,
       opacity: layer.opacity,
       blend: layer.blend,
+      locked: layer.locked,
       maskEnabled: layer.maskEnabled,
       maskEditing: layer.maskEditing,
       text: layer.text ? cloneMetadata(layer.text) : undefined,
@@ -126,6 +128,7 @@ export async function parseProject(blob: Blob): Promise<PhotoDoc> {
       visible: stored.visible !== false,
       opacity: typeof stored.opacity === 'number' ? stored.opacity : 1,
       blend: stored.blend ?? 'source-over',
+      locked: Boolean(stored.locked),
       canvas: await base64ToCanvas(stored.image, width, height),
       maskEnabled: stored.maskEnabled,
       maskEditing: stored.maskEditing,

@@ -1,6 +1,9 @@
 import { OPEN_ACCEPT, VIDEO_EXTENSIONS } from './media';
 import { SPP_EXTENSION, SPP_MIME } from './package';
 import { SPS_MIME } from './project';
+import { PSD_MIME } from './psd';
+import { TIFF_MIME } from './tiff';
+import { EPS_MIME } from './eps';
 import { blobToBase64, base64ToBlob, downloadBlob } from './utils';
 
 export interface OpenedImage {
@@ -56,6 +59,10 @@ export function mimeFromName(name: string): string {
     sps: SPS_MIME,
     spp: SPP_MIME,
     zip: SPP_MIME,
+    psd: PSD_MIME,
+    psb: PSD_MIME,
+    eps: EPS_MIME,
+    ps: EPS_MIME,
   };
   return map[ext] ?? 'application/octet-stream';
 }
@@ -121,6 +128,7 @@ export async function openImages(): Promise<OpenedImage[]> {
           extensions: [
             'png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'avif', 'gif', 'bmp', 'dib',
             'tif', 'tiff', 'svg', 'svgz', 'ico', 'cur', 'heic', 'heif', 'jxl', 'jp2',
+            'psd', 'psb', 'eps', 'ps',
             'mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'avi', 'sps', 'spp', 'zip',
           ],
         },
@@ -164,7 +172,13 @@ export async function saveExport(
             ? 'sps'
             : mime === SPP_MIME
               ? SPP_EXTENSION
-              : 'png');
+              : mime === PSD_MIME
+                ? 'psd'
+                : mime === TIFF_MIME
+                  ? 'tiff'
+                  : mime === EPS_MIME
+                    ? 'eps'
+                    : 'png');
     const target = await save({
       title: 'Enregistrer depuis SuperPhoto',
       defaultPath: filename,
@@ -185,13 +199,21 @@ export function extensionForMime(mime: string): string {
   if (mime === 'image/webp') return 'webp';
   if (mime === SPS_MIME) return 'sps';
   if (mime === SPP_MIME) return SPP_EXTENSION;
+  if (mime === PSD_MIME) return 'psd';
+  if (mime === TIFF_MIME) return 'tiff';
+  if (mime === EPS_MIME) return 'eps';
   return 'png';
 }
 
-export function mimeForFormat(format: 'png' | 'jpeg' | 'webp' | 'sps'): string {
+export type ExportMime = 'png' | 'jpeg' | 'webp' | 'sps' | 'psd' | 'tiff' | 'eps';
+
+export function mimeForFormat(format: ExportMime): string {
   if (format === 'jpeg') return 'image/jpeg';
   if (format === 'webp') return 'image/webp';
   if (format === 'sps') return SPS_MIME;
+  if (format === 'psd') return PSD_MIME;
+  if (format === 'tiff') return TIFF_MIME;
+  if (format === 'eps') return EPS_MIME;
   return 'image/png';
 }
 

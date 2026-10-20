@@ -34,6 +34,7 @@ import {
   type DocGeometrySnapshot,
 } from './document';
 import { History } from './history';
+import { epsFromDocument } from './eps';
 import {
   extensionForMime,
   isTauri,
@@ -88,6 +89,8 @@ import {
 } from './package';
 import { colorModeShort, convertDocumentMode } from './colorspace';
 import { looksLikeProject, parseProject, serializeProject, SPS_MIME } from './project';
+import { isPsdName, looksLikePsd, parsePsd, PSD_MIME, serializePsd } from './psd';
+import { tiffFromDocument } from './tiff';
 import { initRangePaint, paintRange, paintRanges } from './ranges';
 import { magicWandSelection } from './selection';
 import {
@@ -219,7 +222,7 @@ interface ToolInfo {
   cursor: string;
 }
 
-type ExportFormat = 'png' | 'jpeg' | 'webp' | 'sps';
+type ExportFormat = 'png' | 'jpeg' | 'webp' | 'tiff' | 'psd' | 'eps' | 'sps';
 
 /**
  * Session d'un effet de greffon : comme pour les réglages, l'aperçu travaille
@@ -5056,9 +5059,11 @@ export class SuperPhotoEditor {
     const sync = () => {
       const w = Math.max(1, Number(width.value) || 1);
       const h = Math.max(1, Number(height.value) || 1);
-      const scale = Math.min(220 / w, 150 / h, 1);
-      preview.style.width = `${Math.max(24, w * scale)}px`;
-      preview.style.height = `${Math.max(24, h * scale)}px`;
+      // Le bandeau d'aperçu est bas et large : on garde la forme du document
+      // dans une boîte de 150 × 76 pour ne pas écraser les colonnes du haut.
+      const scale = Math.min(150 / w, 76 / h, 1);
+      preview.style.width = `${Math.max(18, w * scale)}px`;
+      preview.style.height = `${Math.max(18, h * scale)}px`;
       const background = this.newDocModal.querySelector<HTMLElement>('[data-bg].is-active')?.dataset.bg;
       preview.style.background = background === 'black'
         ? '#000000'
@@ -5415,7 +5420,10 @@ export class SuperPhotoEditor {
     for (const button of this.exportModal.querySelectorAll<HTMLElement>('[data-format]')) {
       button.classList.toggle('is-active', button.dataset.format === this.exportFormat);
     }
-    byId('export-quality-row').hidden = this.exportFormat === 'png' || this.exportFormat === 'sps';
+    // Le réglage de qualité n'a de sens qu'en JPEG et WebP : les autres formats
+    // sont soit sans perte, soit structurés (PSD, TIFF, EPS, projet).
+    byId('export-quality-row').hidden =
+      this.exportFormat !== 'jpeg' && this.exportFormat !== 'webp';
     const filename = byId<HTMLInputElement>('export-filename');
     const base = stripExtension(filename.value.trim() || 'superphoto');
     const extension = this.exportFormat === 'jpeg' ? 'jpg' : this.exportFormat;
@@ -5424,9 +5432,15 @@ export class SuperPhotoEditor {
     const key =
       this.exportFormat === 'sps'
         ? 'export.hintSps'
-        : this.exportFormat === 'png'
-          ? 'export.hintPng'
-          : 'export.hintFlat';
+        : this.exportFormat === 'psd'
+          ? 'export.hintPsd'
+          : this.exportFormat === 'tiff'
+            ? 'export.hintTiff'
+            : this.exportFormat === 'eps'
+              ? 'export.hintEps'
+              : this.exportFormat === 'png'
+                ? 'export.hintPng'
+                : 'export.hintFlat';
     hint.textContent = t(key);
     hint.dataset.i18n = key;
   }
@@ -5443,13 +5457,7 @@ export class SuperPhotoEditor {
     try {
       const mime = mimeForFormat(this.exportFormat);
       const quality = Number(byId<HTMLInputElement>('export-quality').value) / 100;
-      const blob = this.exportFormat === 'sps'
-        ? await serializeProject(doc)
-        : await canvasToBlob(
-            compositeCanvas(doc, this.exportFormat === 'png' ? null : '#ffffff'),
-            mime,
-            quality,
-          );
+      const blob = await this.renderExport(this.exportFormat, doc, mime, quality);
       let filename = byId<HTMLInputElement>('export-filename').value.trim() || 'superphoto';
       const expectedExt = extensionForMime(mime);
       if (!filename.toLowerCase().endsWith(`.${expectedExt}`)) {
@@ -5459,7 +5467,7 @@ export class SuperPhotoEditor {
       if (saved) {
         this.closeExportDialog();
         this.toast(
-          this.exportFormat === 'sps'
+          this.exportFormat === 'sps' || this.exportFormat === 'psd'
             ? t('export.projectDone', { name: filename })
             : t('export.done', { name: filename }),
           'success',
@@ -5473,6 +5481,37 @@ export class SuperPhotoEditor {
       button.disabled = false;
       if (label) label.textContent = original;
     }
+  }
+
+  /**
+   * Produit le fichier à écrire pour le format demandé.
+   *
+   * Les canvas du navigateur ne savent encoder que PNG, JPEG et WebP : TIFF,
+   * PSD et EPS sont assemblés octet par octet dans leurs modules dédiés. Le
+   * `compositeCanvas` sert de base commune, avec fond blanc partout où le format
+   * ne gère pas la transparence.
+   */
+  private async renderExport(
+    format: ExportFormat,
+    doc: PhotoDoc,
+    mime: string,
+    quality: number,
+  ): Promise<Blob> {
+    if (format === 'sps') return serializeProject(doc);
+    if (format === 'psd') {
+      return serializePsd(doc, compositeCanvas(doc, null));
+    }
+    if (format === 'tiff') {
+      return tiffFromDocument(doc, compositeCanvas(doc, doc.background === 'transparent' ? null : '#ffffff'));
+    }
+    if (format === 'eps') {
+      return epsFromDocument(doc, compositeCanvas(doc, '#ffffff'));
+    }
+    return canvasToBlob(
+      compositeCanvas(doc, format === 'png' ? null : '#ffffff'),
+      mime,
+      quality,
+    );
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -8689,6 +8728,13 @@ export class SuperPhotoEditor {
     return error instanceof Error ? error.message : String(error);
   }
 
+  /** Vrai si les quatre premiers octets sont `8BPS` (PSD ou PSB). */
+  private async blobIsPsd(blob: Blob): Promise<boolean> {
+    if (blob.size < 4) return false;
+    const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    return looksLikePsd(head);
+  }
+
   /**
    * Un seul point d'entrée pour tous les médias : paquet `.spp`, projet `.sps`,
    * image de n'importe quel format décodable, ou vidéo (première image).
@@ -8711,6 +8757,23 @@ export class SuperPhotoEditor {
       this.openTab(doc);
       this.closeNewDocumentDialog();
       this.toast(t('msg.projectOpened', { name: doc.name, n: doc.layers.length }), 'success');
+      return;
+    }
+    // Un PSD arrive souvent sans type MIME (glisser-déposer depuis le bureau) :
+    // on interroge l'extension puis la signature `8BPS` avant tout décodage
+    // générique, car le navigateur ne sait pas lire un PSD.
+    if (isPsdName(name) || blob.type === PSD_MIME || (await this.blobIsPsd(blob))) {
+      let psdTarget: 'current' | 'tab' = placement === 'current' ? 'current' : 'tab';
+      if (placement === 'ask') {
+        const choice = await this.askPlacement(name, multiple);
+        if (!choice) return;
+        psdTarget = choice;
+      }
+      const doc = await parsePsd(blob);
+      this.closeNewDocumentDialog();
+      if (psdTarget === 'current' && this.tab) this.replaceActiveTabDocument(doc);
+      else this.openTab(doc);
+      this.toast(t('msg.psdOpened', { name: doc.name, n: doc.layers.length }), 'success');
       return;
     }
     if (!isSupportedMedia({ name, type: blob.type })) {

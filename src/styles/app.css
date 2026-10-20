@@ -2787,9 +2787,42 @@ html.theme-dark .segmented button.is-active {
 
 .new-doc-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
-  gap: 22px;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 18px 22px;
   align-items: start;
+}
+
+/* Le bandeau d'aperçu ferme la boîte sur toute la largeur : les deux colonnes
+   finissent à la même hauteur, plus de vide en bas à gauche. */
+.new-preview-bar {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+}
+
+.new-preview-bar .new-preview-stage {
+  min-height: 96px;
+  padding: 0;
+}
+
+.new-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.new-preview-info .preset-note {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  max-width: 46ch;
 }
 
 .preset-pane,
@@ -2800,18 +2833,18 @@ html.theme-dark .segmented button.is-active {
 .preset-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
+  gap: 4px;
 }
 
 .preset-card {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   grid-template-rows: auto auto;
   align-items: center;
   gap: 1px 7px;
-  padding: 8px;
+  padding: 6px 7px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--bg-sunken);
   color: var(--text-dim);
   text-align: left;
@@ -2822,8 +2855,8 @@ html.theme-dark .segmented button.is-active {
   grid-row: 1 / span 2;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 5px;
   background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text-faint);
@@ -2896,9 +2929,31 @@ html.theme-dark .segmented button.is-active {
   gap: 8px;
 }
 
-.new-doc-fields > .unit-field:nth-child(3) {
-  grid-column: span 2;
-  max-width: 190px;
+/* Deuxième ligne : résolution + verrou de proportions côte à côte. */
+.new-doc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 118px) minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.new-doc-row .ratio-lock {
+  margin-top: 0;
+  height: 34px;
+  justify-content: center;
+}
+
+/* Fond et mode chromatique sur une seule ligne : deux blocs égaux. */
+.new-doc-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.new-doc-pair .pane-label {
+  margin-bottom: 7px;
 }
 
 .unit-field {
@@ -3004,13 +3059,13 @@ html.theme-dark .segmented button.is-active {
 }
 
 .new-preview-box {
-  width: 160px;
+  width: 120px;
   height: 90px;
   max-width: 100%;
-  max-height: 150px;
+  max-height: 84px;
   background: #f2f2f4;
   border: 1px solid var(--swatch-border);
-  box-shadow: 0 8px 22px rgba(20, 20, 24, 0.18);
+  box-shadow: 0 6px 16px rgba(20, 20, 24, 0.16);
 }
 
 .new-preview-label {

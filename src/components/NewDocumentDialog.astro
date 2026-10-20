@@ -50,10 +50,6 @@ import BrandMark from './BrandMark.astro';
             <small>1200 × 1600 · 300 dpi</small>
           </button>
         </div>
-        <div class="preset-note">
-          <svg viewBox="0 0 24 24"><use href="#i-info"></use></svg>
-          <span data-i18n="new.presetNote">Everything is computed locally: no upload, no account.</span>
-        </div>
       </section>
 
       <section class="settings-pane" aria-label="Custom format" data-i18n-aria="new.custom">
@@ -74,6 +70,9 @@ import BrandMark from './BrandMark.astro';
               <em>px</em>
             </div>
           </label>
+        </div>
+
+        <div class="new-doc-row">
           <label class="unit-field">
             <span data-i18n="new.resolution">Resolution</span>
             <div class="unit-input">
@@ -81,38 +80,45 @@ import BrandMark from './BrandMark.astro';
               <em data-i18n="common.dpi">dpi</em>
             </div>
           </label>
+          <button class="ratio-lock" id="new-ratio-lock" aria-pressed="false" title="Keep proportions" data-i18n-title="new.keepRatio">
+            <svg viewBox="0 0 24 24"><use href="#i-lock"></use></svg>
+            <span data-i18n="new.keepRatio">Keep proportions</span>
+          </button>
         </div>
 
-        <button class="ratio-lock" id="new-ratio-lock" aria-pressed="false" title="Keep proportions" data-i18n-title="new.keepRatio">
-          <svg viewBox="0 0 24 24"><use href="#i-lock"></use></svg>
-          <span data-i18n="new.keepRatio">Keep proportions</span>
-        </button>
-
-        <div class="pane-label spaced" data-i18n="new.background">Background</div>
-        <div class="segmented" id="new-background">
-          <button data-bg="white" class="is-active" data-i18n="new.white">White</button>
-          <button data-bg="transparent" data-i18n="new.transparent">Transparent</button>
-          <button data-bg="black" data-i18n="new.black">Black</button>
-        </div>
-
-        <div class="pane-label spaced" data-i18n="mode.title">Colour mode</div>
-        <div class="segmented" id="new-color-mode">
-          <button data-mode="rgb" class="is-active" data-i18n="mode.rgb">RGB</button>
-          <button data-mode="cmyk" data-i18n="mode.cmyk">CMYK</button>
-          <button data-mode="gray" data-i18n="mode.gray">B&amp;W</button>
-        </div>
-
-        <div class="new-preview-wrap">
-          <div class="new-preview-stage">
-            <div class="new-preview-box" id="new-preview-box"></div>
+        <div class="new-doc-pair">
+          <div>
+            <div class="pane-label" data-i18n="new.background">Background</div>
+            <div class="segmented" id="new-background">
+              <button data-bg="white" class="is-active" data-i18n="new.white">White</button>
+              <button data-bg="transparent" data-i18n="new.transparent">Transparent</button>
+              <button data-bg="black" data-i18n="new.black">Black</button>
+            </div>
           </div>
-          <span class="new-preview-label" id="new-preview-label">1920 × 1080 px · 72 dpi</span>
+          <div>
+            <div class="pane-label" data-i18n="mode.title">Colour mode</div>
+            <div class="segmented" id="new-color-mode">
+              <button data-mode="rgb" class="is-active" data-i18n="mode.rgb">RGB</button>
+              <button data-mode="cmyk" data-i18n="mode.cmyk">CMYK</button>
+              <button data-mode="gray" data-i18n="mode.gray">B&amp;W</button>
+            </div>
+          </div>
         </div>
-
-        <p class="preset-note" data-i18n="new.note">
-          You can drop images straight from your desktop onto the canvas.
-        </p>
       </section>
+
+      <!-- Bandeau commun aux deux colonnes : la forme du document à gauche, sa
+           fiche à droite. Il ferme la boîte, donc plus de vide en bas à gauche. -->
+      <div class="new-preview-bar">
+        <div class="new-preview-stage">
+          <div class="new-preview-box" id="new-preview-box"></div>
+        </div>
+        <div class="new-preview-info">
+          <span class="new-preview-label" id="new-preview-label">1920 × 1080 px · 72 dpi</span>
+          <p class="preset-note" data-i18n="new.note">
+            You can drop images straight from your desktop onto the canvas.
+          </p>
+        </div>
+      </div>
     </div>
 
     <footer class="dialog-foot">

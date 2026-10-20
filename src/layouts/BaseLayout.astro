@@ -16,10 +16,33 @@ const {
 // marque suivent le même chemin, y compris le manifeste.
 const asset = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 
-// Les réseaux sociaux exigent des URL absolues : elles viennent de `site`.
-const siteUrl = Astro.site ?? new URL('https://superphoto.cc');
-const ogImage = new URL('brand/og-image.png', siteUrl).href;
-const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
+// Les réseaux sociaux et les moteurs exigent des URL absolues. Elles pointent
+// sur l'adresse publique réelle (sous-dossier FTP compris) et restent
+// surchargeables au build : `PUBLIC_SITE_URL=… npm run build:web`.
+const publicBase = import.meta.env.PUBLIC_SITE_URL || 'https://app.zigmoon.com/superphoto/';
+const pageUrl = new URL(publicBase).href;
+const ogImage = new URL('brand/og-image.png', pageUrl).href;
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'SuperPhoto',
+  applicationCategory: 'MultimediaApplication',
+  applicationSubCategory: 'Photo editor',
+  operatingSystem: 'Web, Windows, macOS, Linux',
+  url: pageUrl,
+  image: ogImage,
+  description,
+  inLanguage: ['en', 'fr', 'ja'],
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' },
+  featureList: [
+    'Layers, masks and blend modes',
+    'Non-destructive adjustments: curves, levels, tone, colour',
+    'Selections with progressive feathering',
+    'PSD import and PSD, TIFF, EPS export',
+    'RGB, CMYK and grayscale colour modes',
+    'Effects 2026 plug-in pack',
+  ],
+};
 ---
 <!doctype html>
 <html
@@ -35,6 +58,11 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content={description} />
     <meta name="theme-color" content="#f8f8f8" />
+    <link rel="canonical" href={pageUrl} />
+    <link rel="alternate" hreflang="en" href={pageUrl} />
+    <link rel="alternate" hreflang="fr" href={pageUrl} />
+    <link rel="alternate" hreflang="ja" href={pageUrl} />
+    <link rel="alternate" hreflang="x-default" href={pageUrl} />
 
     <!-- Marque officielle : SVG adaptatif + repli PNG + icône iOS + manifeste -->
     <link rel="icon" type="image/svg+xml" href={asset('favicon.svg')} />
@@ -60,6 +88,9 @@ const pageUrl = new URL(import.meta.env.BASE_URL || '/', siteUrl).href;
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImage} />
+
+    <link rel="alternate" type="text/plain" title="LLMs.txt" href={`${import.meta.env.BASE_URL}llms.txt`} />
+    <script type="application/ld+json" is:inline set:html={JSON.stringify(jsonLd)} />
 
     <title>{title}</title>
     <script is:inline>

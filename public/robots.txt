@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# SuperPhoto — photo retouching studio
+# Crawlers that read the site summary for language models:
+#   https://app.zigmoon.com/superphoto/llms.txt
+
+Sitemap: https://app.zigmoon.com/superphoto/sitemap.xml

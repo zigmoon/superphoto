@@ -32,8 +32,6 @@ async function render(svgPath, pngPath, size, { background = null } = {}) {
 }
 
 const appIcon = path.join(publicDir, 'brand', 'app-icon.svg');
-const markDark = path.join(publicDir, 'brand', 'mark-dark.svg');
-const markLight = path.join(publicDir, 'brand', 'mark-light.svg');
 
 await render(appIcon, path.join(publicDir, 'brand', 'icon-64.png'), 64);
 await render(appIcon, path.join(publicDir, 'brand', 'icon-192.png'), 192);
@@ -41,16 +39,20 @@ await render(appIcon, path.join(publicDir, 'brand', 'icon-512.png'), 512);
 await render(appIcon, path.join(publicDir, 'favicon-32.png'), 32);
 
 // iOS ne gère pas la transparence sur l'écran d'accueil : on garde un fond
-// clair (jamais noir) pour que la marque sombre reste lisible.
+// clair (jamais noir) — les anneaux sombres du logo gardent la marque lisible.
 await render(appIcon, path.join(publicDir, 'apple-touch-icon.png'), 180, {
   background: { r: 255, g: 255, b: 255 },
 });
 
-// Carte de partage 1200 × 630 : fond clair, marque sombre centrée.
+// Carte de partage 1200 × 630 : fond clair, marque officielle centrée.
+const artwork = (await readFile(appIcon, 'utf8'))
+  .replace(/^[\s\S]*?<svg[^>]*>/, '')
+  .replace(/<\/svg>\s*$/, '')
+  .replace(/<title>[\s\S]*?<\/title>/, '');
 const card = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <rect width="1200" height="630" fill="#f8f8f8"/>
-  <g transform="translate(360 95) scale(0.96)">
-    ${(await readFile(markLight, 'utf8')).replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '')}
+  <g transform="translate(390 115) scale(0.84)">
+    ${artwork}
   </g>
 </svg>`;
 await sharp(Buffer.from(card), { density: 144 })
@@ -59,13 +61,18 @@ await sharp(Buffer.from(card), { density: 144 })
   .toFile(path.join(publicDir, 'brand', 'og-image.png'));
 step('public/brand/og-image.png (1200×630)');
 
-// Logo du README : deux variantes, blanc pour les thèmes sombres.
-await sharp(await readFile(markDark), { density: 384 })
+// Logo du README : une seule image, l'œuvre officielle se lit sur fond clair
+// comme sur fond sombre (plaques blanches, anneaux sombres).
+await sharp(await readFile(appIcon), { density: 384 })
   .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
   .png()
-  .toFile(path.join(root, '.github', 'brand-logo-white.png'));
-await sharp(await readFile(markLight), { density: 384 })
+  .toFile(path.join(root, '.github', 'brand-logo.png'));
+step('.github/brand-logo.png');
+
+// Icônes du bureau : Tauri dérive toutes les tailles (ico, icns, png) d'un
+// unique 1024 × 1024 rendu depuis le SVG officiel.
+await sharp(await readFile(appIcon), { density: 512 })
   .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
   .png()
-  .toFile(path.join(root, '.github', 'brand-logo-black.png'));
-step('.github/brand-logo-white.png + brand-logo-black.png');
+  .toFile(path.join(root, 'src-tauri', 'app-icon.png'));
+step('src-tauri/app-icon.png (1024×1024) — puis `npx tauri icon`');

@@ -1,0 +1,57 @@
+# SuperPhoto
+
+> SuperPhoto is a photo-retouching studio that runs in the browser and as a
+> desktop application (Windows, macOS, Linux). Layers, masks, selection,
+> curves, levels, non-destructive adjustments, PSD import and PSD/TIFF/EPS
+> export — packaged with Astro and Rust (Tauri).
+
+SuperPhoto is a Photoshop-like image editor built as a single-page application.
+It is fully static: no account, no upload, no server-side processing. Every
+pixel operation runs locally in the visitor's browser (Canvas 2D + WebGL) or in
+the desktop shell.
+
+- Web application: https://app.zigmoon.com/superphoto/
+- Source code: https://github.com/zigmoon/SUPERPRINT (folder `superphoto/`)
+- Releases (installers): https://github.com/zigmoon/SUPERPRINT/releases
+- Language: English by default, French and Japanese available; the interface
+  follows the browser language and remembers a manual choice.
+
+## What the application does
+
+- Multi-document workspace with tabs; each media can open in the current
+  workspace or in a new tab.
+- Layers: reorder by drag, rename, duplicate, delete, lock, opacity, blend
+  modes, per-layer masks, multi-selection with Shift, locked Background layer.
+- Colour modes: RGB (sRGB) by default, CMYK simulation and grayscale.
+- Retouching tools: crop, shapes, pen (Bézier), text, pencil, brush, eraser,
+  clone stamp, patch, healing brush, light spot, eyedropper, gradient,
+  selection, magic wand, zoom, hand.
+- Adjustments: tone, contrast, colour, levels, curves (monotone cubic
+  interpolation), black & white.
+- Progressive feathering for selections, fill-selection from the context menu,
+  Select All / Deselect / Invert shortcuts.
+- Plug-ins: a docked right drawer; the bundled "Effects 2026" pack adds glitch,
+  scratch, grain and light-leak effects.
+- Export: PNG, JPEG, WebP, AVIF, TIFF, EPS, layered PSD, and `.spp`
+  (SuperPhoto package: ZIP with a manifest, per-document JSON, binary layer
+  masks and a preview).
+- Import: PNG, JPEG, WebP, AVIF, GIF, BMP, SVG, TIFF, PSD (8/16-bit RGB, CMYK
+  and grayscale, layer names, masks, opacity, blend modes, DPI).
+- Interface: light or dark theme, black-and-white only, keyboard shortcuts,
+  drag-and-drop from the desktop.
+
+## Frequently asked facts
+
+- Is it free? The web application is free to use; the source is public on
+  GitHub.
+- Does it need an internet connection? No, once the page is loaded.
+- Are files uploaded to a server? No. Everything stays on the device.
+- Which formats can it open? PSD, TIFF, PNG, JPEG, WebP, AVIF, GIF, BMP, SVG
+  and its own `.spp` package.
+- Does it replace Photoshop? It covers the common retouching workflow
+  (layers, masks, selections, adjustments, PSD round-trip) but it is not a
+  pixel-identical clone and does not load proprietary Photoshop plug-ins.
+
+## Citation
+
+SuperPhoto — photo retouching studio. https://app.zigmoon.com/superphoto/

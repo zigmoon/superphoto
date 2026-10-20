@@ -13,6 +13,7 @@ export const IMAGE_EXTENSIONS = [
   'png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'avif', 'gif', 'bmp', 'dib',
   'tif', 'tiff', 'svg', 'svgz', 'ico', 'cur', 'heic', 'heif', 'jxl', 'jp2',
   'j2k', 'pnm', 'pbm', 'pgm', 'ppm', 'tga', 'dds', 'exr', 'hdr',
+  'psd', 'psb',
 ];
 
 export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'avi'];
@@ -22,6 +23,7 @@ export const PROJECT_EXTENSIONS = ['sps', 'spp', 'zip'];
 
 export const OPEN_ACCEPT = [
   'image/*',
+  'image/vnd.adobe.photoshop',
   'application/zip',
   ...IMAGE_EXTENSIONS.map((extension) => `.${extension}`),
   ...VIDEO_EXTENSIONS.map((extension) => `.${extension}`),
