@@ -17,7 +17,9 @@ previews — built with Astro 7 and Rust (Tauri 2) for Windows, macOS and Linux.
 [![Astro](https://img.shields.io/badge/Astro-7-ff5d01?style=flat-square&logo=astro&logoColor=white)](https://astro.build)
 [![Rust](https://img.shields.io/badge/Rust-Tauri%202-000000?style=flat-square&logo=rust&logoColor=white)](https://tauri.app)
 
-**[Launch the web app](https://app.zigmoon.com/superphoto/) · [Download](#download) · [Features](#features) · [Web / FTP](#deploy-on-your-own-server-ftp) · [Build from source](#build-from-source)**
+**[Launch the web app](https://app.zigmoon.com/superphoto/) · [Features](#features) · [Web / FTP](#deploy-on-your-own-server-ftp) · [Build from source](#build-from-source)**
+
+[![Download the app](https://img.shields.io/badge/%E2%AC%87%20Download%20the%20app-000000?style=for-the-badge)](https://github.com/zigmoon/superphoto/releases/latest)
 
 </div>
 
@@ -25,7 +27,12 @@ previews — built with Astro 7 and Rust (Tauri 2) for Windows, macOS and Linux.
 
 ## Download
 
-One click, always the newest build — the links below point at the latest release.
+**[→ Open the releases page](https://github.com/zigmoon/superphoto/releases/latest)**
+— it lists every build of the newest version (Windows, macOS, Linux, plus the
+`SHA256SUMS` fingerprints), and keeps the previous versions one click away.
+
+The direct links below already point at the newest release, so they keep working
+release after release:
 
 | Platform | Download | Notes |
 | --- | --- | --- |
