@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/brand-logo-dark.png">
-  <img src=".github/brand-logo-light.png" alt="SuperPhoto" width="260">
+  <img src=".github/brand-logo-light.png" alt="SuperPhoto" width="120">
 </picture>
 
 # SuperPhoto
