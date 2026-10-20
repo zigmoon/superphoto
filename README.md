@@ -242,6 +242,18 @@ a floating dialog: it takes a column of its own, the canvas resizes to fit, and
 the zoom / full-screen controls follow. A second click, the `×`, `Esc` or
 **Cancel** closes it and restores the original pixels.
 
+Each effect is an **accordion**: its name in one line, its sliders folded
+underneath. Opening one closes the other, so the whole panel fits without
+scrolling and nothing but the effect names is on screen. The description of an
+effect is available as a tooltip on its title.
+
+The preview is **live while you drag**: the slider renders a reduced copy at
+once, then refines it automatically as soon as the gesture settles, so the
+image follows the handle instead of lagging behind it. **Apply** recomputes at
+full resolution with the same seeded randomness — what you see is exactly what
+you get. Every application is one undo step. If the active layer has no pixels
+yet, the footer says so instead of leaving you with a preview that seems broken.
+
 **Effects 2026** (`v1.0.0`, included) is a film-lab panel in one dialog:
 
 | Effect | What it does |
@@ -253,10 +265,6 @@ the zoom / full-screen controls follow. A second click, the `×`, `Esc` or
 | **Dust & specks** | Random specks and pinholes across the frame |
 | **Film grain** | Grain sized in pixels, monochrome or chromatic |
 | **VHS tape** | Chroma bleed, sparkle and an unstable tracking band |
-
-The preview is live on the canvas at a reduced resolution, and **Apply**
-recomputes at full resolution with the same seeded randomness — what you see is
-exactly what you get. Every application is one undo step.
 
 ### Save — the `.spp` package
 
@@ -354,6 +362,21 @@ ink simulation as the colour-mode switch.
   full shortcut list.
 - Zoom and full screen sit at the bottom-right of the preview, exactly where
   SuperPrint puts them, and follow the side panels when they collapse.
+
+### Tablets and phones
+
+The layout has three shapes, chosen by the width of the window — nothing to
+configure, no separate build:
+
+| Width | Layout |
+| --- | --- |
+| **≥ 1181 px** | Layers on the left, canvas in the middle, tools on the right — the desktop layout |
+| **≤ 1180 px** | Full-width canvas; layers and tools become **drawers** opened from the top bar, one at a time, dismissed by touching the canvas |
+| **≤ 760 px** | Compact top bar (icon buttons, Export keeps its label), full-screen dialogs stacked in one column, larger touch targets |
+
+The plug-in drawer follows the same rule and slides over the canvas instead of
+squeezing it. Pinch-zoom, two-finger pan and touch painting work through the
+same pointer pipeline as the mouse, so a stylus behaves as expected.
 
 ---
 

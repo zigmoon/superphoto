@@ -78,9 +78,11 @@ for (const [source, target, label] of [
 }
 
 // Icônes du bureau : Tauri dérive toutes les tailles (ico, icns, png) d'un
-// unique 1024 × 1024 rendu depuis le SVG officiel.
-await sharp(await readFile(appIcon), { density: 512 })
+// unique 1024 × 1024 rendu depuis la version **blanche** de la marque.
+// Aucun fond : le PNG est transparent, donc le logo se pose sur la barre des
+// tâches et le Dock sans pastille carrée derrière lui.
+await sharp(await readFile(path.join(publicDir, 'brand', 'mark-white.svg')), { density: 512 })
   .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
   .png()
   .toFile(path.join(root, 'src-tauri', 'app-icon.png'));
-step('src-tauri/app-icon.png (1024×1024) — puis `npx tauri icon`');
+step('src-tauri/app-icon.png (1024×1024, marque blanche, transparent) — puis `npx tauri icon`');

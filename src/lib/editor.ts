@@ -236,9 +236,16 @@ interface PluginSession {
   layerId: string;
   params: Record<string, number>;
   original: ImageData;
+  /** Copie réduite « qualité » du calque, base du rendu final de l'aperçu. */
   preview: ImageData;
   previewScale: number;
   previewCanvas: HTMLCanvasElement;
+  /** Copie encore plus réduite, pour suivre la glissière sans ralentir. */
+  fast: ImageData;
+  fastScale: number;
+  fastCanvas: HTMLCanvasElement;
+  /** Effet déplié dans la trappe (un seul à la fois). */
+  open: string;
 }
 
 const TOOLS: Record<ToolId, ToolInfo> = {
@@ -363,6 +370,20 @@ function scaleSelection(selection: Selection, scale: number): Selection {
 
 const MAX_PREVIEW_EDGE = 1800;
 const PREVIEW_MIN_INTERVAL = 42;
+/**
+ * Aperçu des greffons. Un effet parcourt chaque pixel : sur une toile de
+ * 4000 px de large, un rendu pleine taille prendrait des dizaines de
+ * millisecondes et la glissière saccaderait. On travaille donc sur deux
+ * copies réduites — assez grandes pour juger, assez petites pour rester
+ * fluides — et « Appliquer » recalcule en pleine résolution.
+ */
+const PLUGIN_PREVIEW_EDGE = 1400;
+const PLUGIN_FAST_EDGE = 560;
+const PLUGIN_REFINE_DELAY = 170;
+/** Deux aperçus par frame au maximum : au-delà, le geste devient pâteux. */
+const PLUGIN_PREVIEW_INTERVAL = 26;
+/** Largeur sous laquelle les colonnes latérales deviennent des tiroirs. */
+const NARROW_PX = 1180;
 
 /**
  * Un onglet de document. Chaque onglet garde son historique, sa sélection et
@@ -576,7 +597,13 @@ export class SuperPhotoEditor {
   private pluginSession: PluginSession | null = null;
   private pluginFrame = 0;
   private pluginTimer = 0;
+  private pluginRefine = 0;
   private pluginLastPreviewAt = 0;
+
+  // ── Adaptation ────────────────────────────────────────────────────────────
+  /** Colonnes latérales en tiroir (écran étroit). */
+  private narrow = false;
+  private responsiveFrame = 0;
 
   private readonly app: HTMLElement;
   private readonly viewport: HTMLElement;
@@ -1754,6 +1781,72 @@ export class SuperPhotoEditor {
     this.setZoom(this.zoom * factor, { x: clientX, y: clientY });
   }
 
+  /**
+   * Gestes tactiles sur la toile.
+   *
+   * Un doigt reste l'outil courant (pinceau, sélection…) ; deux doigts
+   * pincent pour zoomer et se déplacent pour cadrer, comme dans n'importe
+   * quelle application d'image sur tablette. Pendant le pincement, le geste
+   * d'outil en cours est abandonné pour ne pas peindre par accident.
+   */
+  private bindTouchGestures(): void {
+    const points = new Map<number, { x: number; y: number }>();
+    let lastDistance = 0;
+    const distance = (): number => {
+      const [a, b] = [...points.values()];
+      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+    const midpoint = (): { x: number; y: number } => {
+      const [a, b] = [...points.values()];
+      return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: 0, y: 0 };
+    };
+
+    this.viewport.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (event.pointerType !== 'touch') return;
+        points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (points.size !== 2) return;
+        // Deuxième doigt : on annule le trait éventuellement commencé.
+        this.drag = null;
+        this.display.style.cursor = '';
+        lastDistance = distance();
+      },
+      { capture: true },
+    );
+
+    this.viewport.addEventListener(
+      'pointermove',
+      (event) => {
+        if (event.pointerType !== 'touch' || !points.has(event.pointerId)) return;
+        points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (points.size < 2) return;
+        event.preventDefault();
+        const current = distance();
+        if (lastDistance > 0 && current > 0) {
+          const factor = current / lastDistance;
+          // Un seuil évite les micro-secousses qui feraient vibrer le zoom.
+          if (Math.abs(factor - 1) > 0.008) {
+            const middle = midpoint();
+            this.setZoom(this.zoom * factor, middle);
+            lastDistance = current;
+          }
+        }
+      },
+      { capture: true, passive: false },
+    );
+
+    const release = (event: PointerEvent): void => {
+      if (event.pointerType !== 'touch') return;
+      points.delete(event.pointerId);
+      lastDistance = points.size >= 2 ? distance() : 0;
+      // Retour au doigt unique : le prochain geste redevient un geste d'outil.
+      if (points.size === 0) this.drag = null;
+    };
+    this.viewport.addEventListener('pointerup', release, { capture: true });
+    this.viewport.addEventListener('pointercancel', release, { capture: true });
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Chrome / UI sync
   // ───────────────────────────────────────────────────────────────────────────
@@ -2647,19 +2740,47 @@ export class SuperPhotoEditor {
     byId<HTMLButtonElement>('btn-theme-toggle').addEventListener('click', () => this.toggleTheme());
 
     byId<HTMLButtonElement>('btn-toggle-left').addEventListener('click', () => {
-      this.app.classList.toggle('hide-left');
+      const open = this.app.classList.contains('hide-left');
+      this.app.classList.toggle('hide-left', false);
+      if (!open) this.app.classList.add('hide-left');
+      // Un seul tiroir à la fois : sur écran étroit ils se recouvriraient.
+      if (this.narrow && !this.app.classList.contains('hide-left')) {
+        this.app.classList.add('hide-right');
+      }
+      this.syncResponsiveChrome();
       this.invalidateDisplayRect();
       window.setTimeout(() => {
         if (this.fitMode) this.fitToView();
       }, 80);
     });
     byId<HTMLButtonElement>('btn-toggle-right').addEventListener('click', () => {
-      this.app.classList.toggle('hide-right');
+      const open = this.app.classList.contains('hide-right');
+      this.app.classList.toggle('hide-right', false);
+      if (!open) this.app.classList.add('hide-right');
+      if (this.narrow && !this.app.classList.contains('hide-right')) {
+        this.app.classList.add('hide-left');
+      }
+      this.syncResponsiveChrome();
       this.invalidateDisplayRect();
       window.setTimeout(() => {
         if (this.fitMode) this.fitToView();
       }, 80);
     });
+
+    // Voile : sur écran étroit, toucher la toile referme le tiroir ouvert.
+    const scrim = document.getElementById('panel-scrim');
+    scrim?.addEventListener('click', () => {
+      if (!this.pluginPanel.hidden) {
+        this.cancelPlugin();
+        return;
+      }
+      this.app.classList.add('hide-left', 'hide-right');
+      this.syncResponsiveChrome();
+    });
+
+    this.syncResponsive();
+    window.addEventListener('resize', () => this.scheduleResponsive(), { passive: true });
+    window.addEventListener('orientationchange', () => this.scheduleResponsive(), { passive: true });
 
     let resizeFrame = 0;
     window.addEventListener(
@@ -2675,6 +2796,55 @@ export class SuperPhotoEditor {
       },
       { passive: true },
     );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Adaptation à la taille de l'écran
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Sous `NARROW_PX`, les deux colonnes latérales ne tiennent plus à côté de la
+   * toile : elles deviennent des tiroirs posés par-dessus, fermés au départ.
+   * Au-delà, on retrouve exactement la disposition d'origine — rien n'est
+   * perdu, et le choix de chacun est respecté quand on repasse en grand.
+   */
+  private syncResponsive(): void {
+    const narrow = window.innerWidth <= NARROW_PX;
+    if (narrow !== this.narrow) {
+      this.narrow = narrow;
+      // On ne force qu'au changement de camp : sinon chaque redimensionnement
+      // rouvrirait des panneaux que l'utilisateur vient de fermer.
+      this.app.classList.toggle('hide-left', narrow);
+      this.app.classList.toggle('hide-right', narrow);
+    }
+    this.syncResponsiveChrome();
+    this.invalidateDisplayRect();
+  }
+
+  private scheduleResponsive(): void {
+    if (this.responsiveFrame) return;
+    this.responsiveFrame = window.requestAnimationFrame(() => {
+      this.responsiveFrame = 0;
+      this.syncResponsive();
+      window.setTimeout(() => {
+        if (this.fitMode) this.fitToView();
+      }, 60);
+    });
+  }
+
+  /** Voile et état des boutons de la barre supérieure. */
+  private syncResponsiveChrome(): void {
+    const scrim = document.getElementById('panel-scrim');
+    const layersOpen = !this.app.classList.contains('hide-left');
+    const toolsOpen = !this.app.classList.contains('hide-right');
+    const pluginOpen = !this.pluginPanel.hidden;
+    if (scrim) scrim.hidden = !(this.narrow && (layersOpen || toolsOpen || pluginOpen));
+    document
+      .getElementById('btn-toggle-left')
+      ?.setAttribute('aria-pressed', String(layersOpen));
+    document
+      .getElementById('btn-toggle-right')
+      ?.setAttribute('aria-pressed', String(toolsOpen));
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -2703,6 +2873,7 @@ export class SuperPhotoEditor {
     if (separator) separator.hidden = !visible;
     if (!visible && this.pluginSession) this.cancelPlugin();
     this.renderPreferencesPlugins();
+    this.syncResponsiveChrome();
   }
 
   private bindPluginDialog(): void {
@@ -2714,17 +2885,21 @@ export class SuperPhotoEditor {
     this.node<HTMLButtonElement>('plugin-cancel').addEventListener('click', () => this.cancelPlugin());
     this.node<HTMLButtonElement>('plugin-apply').addEventListener('click', () => this.applyPluginEffect());
     this.node<HTMLButtonElement>('plugin-reset').addEventListener('click', () => this.resetPluginEffect());
+    // Le soufflet : un clic sur l'en-tête ouvre son effet et referme le précédent.
     this.node<HTMLElement>('plugin-effects').addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLElement>('[data-effect]');
-      if (!button?.dataset.effect) return;
-      this.selectPluginEffect(button.dataset.effect);
+      const head = (event.target as HTMLElement).closest<HTMLElement>('[data-effect-head]');
+      const effect = head?.dataset.effectHead;
+      if (!effect) return;
+      this.togglePluginEffect(effect);
     });
-    this.node<HTMLElement>('plugin-params').addEventListener('input', (event) => {
+    // Les réglages vivent dans les soufflets : un seul écouteur pour tous.
+    this.node<HTMLElement>('plugin-effects').addEventListener('input', (event) => {
       const input = event.target as HTMLInputElement | null;
       const key = input?.dataset.pluginParam;
       if (!key || !this.pluginSession) return;
       this.pluginSession.params[key] = Number(input.value);
-      const output = input.closest('.range-field')?.querySelector('output');
+      const field = input.closest('.fx-param');
+      const output = field?.querySelector<HTMLElement>('.fx-param-value');
       if (output) output.textContent = `${input.value}${this.pluginParamUnit(key)}`;
       this.syncRangeFills();
       this.schedulePluginPreview();
@@ -2770,10 +2945,16 @@ export class SuperPhotoEditor {
     }
     const ctx = canvasContext(layer.canvas);
     const original = ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
-    const previewScale = Math.min(1, MAX_PREVIEW_EDGE / Math.max(layer.canvas.width, layer.canvas.height));
+    const biggest = Math.max(layer.canvas.width, layer.canvas.height);
+    const previewScale = Math.min(1, PLUGIN_PREVIEW_EDGE / biggest);
+    const fastScale = Math.min(1, PLUGIN_FAST_EDGE / biggest);
     const previewCanvas = createCanvas(
       Math.max(1, Math.round(layer.canvas.width * previewScale)),
       Math.max(1, Math.round(layer.canvas.height * previewScale)),
+    );
+    const fastCanvas = createCanvas(
+      Math.max(1, Math.round(layer.canvas.width * fastScale)),
+      Math.max(1, Math.round(layer.canvas.height * fastScale)),
     );
     let preview = original;
     if (previewScale < 1) {
@@ -2781,6 +2962,13 @@ export class SuperPhotoEditor {
       previewContext.imageSmoothingQuality = 'medium';
       previewContext.drawImage(layer.canvas, 0, 0, previewCanvas.width, previewCanvas.height);
       preview = previewContext.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+    }
+    let fast = preview;
+    if (fastScale < 1) {
+      const fastContext = canvasContext(fastCanvas);
+      fastContext.imageSmoothingQuality = 'low';
+      fastContext.drawImage(layer.canvas, 0, 0, fastCanvas.width, fastCanvas.height);
+      fast = fastContext.getImageData(0, 0, fastCanvas.width, fastCanvas.height);
     }
     const effect = plugin.effects[0];
     if (!effect) return;
@@ -2793,6 +2981,10 @@ export class SuperPhotoEditor {
       preview,
       previewScale,
       previewCanvas,
+      fast,
+      fastScale,
+      fastCanvas,
+      open: effect.id,
     };
     this.pluginLastPreviewAt = 0;
     this.node('plugin-kicker').textContent = `${plugin.name.toUpperCase()} · v${plugin.version}`;
@@ -2800,6 +2992,10 @@ export class SuperPhotoEditor {
     this.pluginPanel.hidden = false;
     this.app.classList.add('plugins-open');
     this.node<HTMLButtonElement>('btn-plugins').classList.add('is-active');
+    // Sur écran étroit, la trappe occupe la droite : le tiroir d'outils
+    // s'efface pour ne pas se superposer à elle.
+    if (this.narrow) this.app.classList.add('hide-right');
+    this.syncResponsiveChrome();
     this.renderPluginEffects();
     this.selectPluginEffect(effect.id);
     // La colonne fait rétrécir la toile : on recadre si l'ajustement automatique
@@ -2817,22 +3013,88 @@ export class SuperPhotoEditor {
     return params;
   }
 
+  /**
+   * Le calque visé n'a-t-il aucun pixel visible ? Un effet appliqué à un calque
+   * transparent ne change rien à l'écran : sans ce contrôle, l'utilisateur
+   * croirait l'aperçu en panne.
+   */
+  private layerHasPixels(layer: Layer): boolean {
+    const { width, height } = layer.canvas;
+    if (layer.kind === 'text') return Boolean(layer.text?.content?.trim());
+    if (layer.kind === 'path') return (layer.path?.anchors.length ?? 0) > 0;
+    const data = canvasContext(layer.canvas).getImageData(0, 0, width, height).data;
+    // On échantillonne : inutile de parcourir 8 millions de pixels pour cela.
+    const step = Math.max(4, Math.floor((width * height) / 20000) * 4);
+    for (let i = 3; i < data.length; i += step) {
+      if ((data[i] ?? 0) > 2) return true;
+    }
+    return false;
+  }
+
+  /** Construit les soufflets : un en-tête, puis ses réglages repliés dessous. */
   private renderPluginEffects(): void {
     const session = this.pluginSession;
     const plugin = session ? findPlugin(session.pluginId) : null;
     const host = this.node<HTMLElement>('plugin-effects');
-    if (!plugin || !host) return;
+    if (!plugin || !host || !session) return;
     host.innerHTML = plugin.effects
-      .map(
-        (effect) => `
-          <button class="plugin-effect${effect.id === session?.effectId ? ' is-active' : ''}"
-                  role="option" aria-selected="${effect.id === session?.effectId}"
-                  data-effect="${effect.id}">
-            <span class="plugin-effect-name">${escapeHtml(t(effect.nameKey))}</span>
-            <span class="plugin-effect-desc">${escapeHtml(t(effect.descKey))}</span>
-          </button>`,
-      )
+      .map((effect) => {
+        const open = effect.id === session.open;
+        const body = open ? this.pluginParamMarkup(effect) : '';
+        return `
+          <section class="fx-item${open ? ' is-open' : ''}">
+            <button class="fx-head" type="button"
+                    data-effect-head="${effect.id}"
+                    aria-expanded="${open}"
+                    aria-controls="fx-body-${effect.id}"
+                    title="${escapeHtml(t(effect.descKey))}">
+              <svg class="fx-caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"></use></svg>
+              <span class="fx-name">${escapeHtml(t(effect.nameKey))}</span>
+            </button>
+            <div class="fx-body" id="fx-body-${effect.id}" ${open ? '' : 'hidden'}>${body}</div>
+          </section>`;
+      })
       .join('');
+    this.syncRangeFills();
+  }
+
+  private pluginParamMarkup(effect: PluginEffect): string {
+    const session = this.pluginSession;
+    if (!session) return '';
+    return `<div class="fx-params">${effect.params
+      .map((param) => {
+        const value = session.params[param.key] ?? param.default;
+        return `
+          <label class="fx-param">
+            <span class="fx-param-label">${escapeHtml(t(param.labelKey))}</span>
+            <span class="fx-param-value">${value}${param.unit ?? ''}</span>
+            <input type="range" min="${param.min}" max="${param.max}" step="${param.step}"
+                   data-plugin-param="${param.key}" value="${value}"
+                   aria-label="${escapeHtml(t(param.labelKey))}">
+          </label>`;
+      })
+      .join('')}</div>`;
+  }
+
+  /** Ouvre un soufflet et referme l'autre : la trappe reste courte. */
+  private togglePluginEffect(effectId: string): void {
+    const session = this.pluginSession;
+    if (!session) return;
+    // Cliquer l'effet déjà ouvert le referme ; en rouvrir un autre le sélectionne.
+    if (session.open === effectId) {
+      session.open = '';
+      const item = this.pluginPanel.querySelector<HTMLElement>(`[data-effect-head="${effectId}"]`)?.closest<HTMLElement>('.fx-item');
+      if (item) {
+        item.classList.remove('is-open');
+        const head = item.querySelector<HTMLElement>('.fx-head');
+        head?.setAttribute('aria-expanded', 'false');
+        const body = item.querySelector<HTMLElement>('.fx-body');
+        if (body) body.hidden = true;
+      }
+      return;
+    }
+    session.open = effectId;
+    this.selectPluginEffect(effectId);
   }
 
   private selectPluginEffect(effectId: string): void {
@@ -2841,33 +3103,18 @@ export class SuperPhotoEditor {
     const effect = findEffect(session.pluginId, effectId);
     if (!effect) return;
     session.effectId = effect.id;
+    session.open = effect.id;
     session.params = this.effectDefaults(findPlugin(session.pluginId)!, effect);
     this.renderPluginEffects();
-    this.node('plugin-effect-name').textContent = t(effect.nameKey);
-    this.node('plugin-effect-desc').textContent = t(effect.descKey);
     const layer = this.doc?.layers.find((item) => item.id === session.layerId);
-    this.node('plugin-target').textContent = t('plugin.target', { name: layer?.name ?? '—' });
-    this.renderPluginParams(effect);
+    const empty = !layer || !this.layerHasPixels(layer);
+    this.node('plugin-target').textContent = empty
+      ? t('plugin.emptyLayer', { name: layer?.name ?? '—' })
+      : t('plugin.target', { name: layer?.name ?? '—' });
+    // Un calque vide ne montrerait rien : on le dit au lieu de laisser croire
+    // que l'aperçu est cassé.
+    this.node<HTMLElement>('plugin-target-wrap').classList.toggle('is-warning', empty);
     this.schedulePluginPreview();
-  }
-
-  private renderPluginParams(effect: PluginEffect): void {
-    const host = this.node<HTMLElement>('plugin-params');
-    const session = this.pluginSession;
-    if (!host || !session) return;
-    host.innerHTML = effect.params
-      .map((param) => {
-        const value = session.params[param.key] ?? param.default;
-        return `
-          <label class="range-field">
-            <span>${escapeHtml(t(param.labelKey))}</span>
-            <output>${value}${param.unit ?? ''}</output>
-            <input type="range" min="${param.min}" max="${param.max}" step="${param.step}"
-                   data-plugin-param="${param.key}" value="${value}">
-          </label>`;
-      })
-      .join('');
-    this.syncRangeFills();
   }
 
   private resetPluginEffect(): void {
@@ -2877,27 +3124,56 @@ export class SuperPhotoEditor {
     const effect = findEffect(session.pluginId, session.effectId);
     if (!plugin || !effect) return;
     session.params = this.effectDefaults(plugin, effect);
-    this.renderPluginParams(effect);
+    this.renderPluginEffects();
     this.schedulePluginPreview();
   }
 
-  private schedulePluginPreview(): void {
-    if (this.pluginFrame || this.pluginTimer) return;
+  /**
+   * Aperçu immédiat en basse résolution, puis raffinage automatique dès que la
+   * glissière se calme. C'est ce qui rend le réglage « live » : le premier
+   * rendu arrive avant la frame suivante, le beau rendu suit tout seul.
+   */
+  private schedulePluginPreview(fast = true): void {
+    if (this.pluginRefine) {
+      window.clearTimeout(this.pluginRefine);
+      this.pluginRefine = 0;
+    }
+    if (this.pluginFrame || this.pluginTimer) {
+      if (!fast) this.schedulePluginRefine();
+      return;
+    }
     const elapsed = performance.now() - this.pluginLastPreviewAt;
-    if (elapsed < PREVIEW_MIN_INTERVAL) {
+    if (elapsed < PLUGIN_PREVIEW_INTERVAL) {
       this.pluginTimer = window.setTimeout(() => {
         this.pluginTimer = 0;
-        this.schedulePluginPreview();
-      }, PREVIEW_MIN_INTERVAL - elapsed);
+        this.schedulePluginPreview(fast);
+      }, PLUGIN_PREVIEW_INTERVAL - elapsed);
       return;
     }
     this.pluginFrame = window.requestAnimationFrame(() => {
       this.pluginFrame = 0;
-      this.previewPlugin();
+      this.previewPlugin(fast ? 'fast' : 'full');
+      this.schedulePluginRefine();
     });
   }
 
-  private previewPlugin(): void {
+  private schedulePluginRefine(): void {
+    if (this.pluginRefine) window.clearTimeout(this.pluginRefine);
+    this.pluginRefine = window.setTimeout(() => {
+      this.pluginRefine = 0;
+      this.previewPlugin('full');
+    }, PLUGIN_REFINE_DELAY);
+  }
+
+  /**
+   * Aperçu de l'effet sur la toile.
+   *
+   * Deux qualités : `fast` pendant qu'on tire une glissière (copie réduite à
+   * quelques centaines de pixels, donc immédiate), puis `full` dès que le geste
+   * se calme. Le rendu final, lui, repart toujours du calque en pleine
+   * résolution — l'aperçu ne sert qu'à juger.
+   */
+  private previewPlugin(quality: 'fast' | 'full' = 'full'): void {
     const session = this.pluginSession;
     const doc = this.doc;
     if (!session || !doc) return;
@@ -2905,25 +3181,28 @@ export class SuperPhotoEditor {
     const effect = findEffect(session.pluginId, session.effectId);
     if (!layer || !effect) return;
     this.pluginLastPreviewAt = performance.now();
+    const source = quality === 'fast' ? session.fast : session.preview;
+    const scale = quality === 'fast' ? session.fastScale : session.previewScale;
     const copy = new ImageData(
-      new Uint8ClampedArray(session.preview.data),
-      session.preview.width,
-      session.preview.height,
+      new Uint8ClampedArray(source.data),
+      source.width,
+      source.height,
     );
     // `_scale` = taille de l'aperçu / taille réelle : les effets qui travaillent
     // en pixels gardent ainsi la même échelle visuelle dans les deux rendus.
-    effect.apply(copy, { ...session.params, _scale: session.previewScale });
+    effect.apply(copy, { ...session.params, _scale: scale });
     const ctx = canvasContext(layer.canvas);
-    if (session.previewScale >= 1) {
+    if (scale >= 1) {
       ctx.putImageData(copy, 0, 0);
     } else {
-      const previewContext = canvasContext(session.previewCanvas);
-      previewContext.clearRect(0, 0, session.previewCanvas.width, session.previewCanvas.height);
-      previewContext.putImageData(copy, 0, 0);
+      const buffer = quality === 'fast' ? session.fastCanvas : session.previewCanvas;
+      const bufferContext = canvasContext(buffer);
+      bufferContext.clearRect(0, 0, buffer.width, buffer.height);
+      bufferContext.putImageData(copy, 0, 0);
       ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'low';
-      ctx.drawImage(session.previewCanvas, 0, 0, layer.canvas.width, layer.canvas.height);
+      ctx.imageSmoothingQuality = quality === 'fast' ? 'low' : 'high';
+      ctx.drawImage(buffer, 0, 0, layer.canvas.width, layer.canvas.height);
     }
     this.renderCanvas();
     this.renderOverlay();
@@ -2941,8 +3220,10 @@ export class SuperPhotoEditor {
     }
     if (this.pluginFrame) cancelAnimationFrame(this.pluginFrame);
     if (this.pluginTimer) window.clearTimeout(this.pluginTimer);
+    if (this.pluginRefine) window.clearTimeout(this.pluginRefine);
     this.pluginFrame = 0;
     this.pluginTimer = 0;
+    this.pluginRefine = 0;
     // Le « avant » vient de la copie d'origine, pas de la toile : celle-ci
     // contient déjà l'aperçu de l'effet, et l'annulation aurait restauré
     // l'aperçu au lieu des pixels d'origine.
@@ -2987,6 +3268,7 @@ export class SuperPhotoEditor {
     this.pluginPanel.hidden = true;
     this.app.classList.remove('plugins-open');
     this.node<HTMLButtonElement>('btn-plugins').classList.remove('is-active');
+    this.syncResponsiveChrome();
     this.invalidateDisplayRect();
     window.setTimeout(() => {
       if (this.fitMode) this.fitToView();
@@ -3001,8 +3283,10 @@ export class SuperPhotoEditor {
     }
     if (this.pluginFrame) cancelAnimationFrame(this.pluginFrame);
     if (this.pluginTimer) window.clearTimeout(this.pluginTimer);
+    if (this.pluginRefine) window.clearTimeout(this.pluginRefine);
     this.pluginFrame = 0;
     this.pluginTimer = 0;
+    this.pluginRefine = 0;
     const layer = this.doc?.layers.find((item) => item.id === session.layerId);
     if (layer) {
       const ctx = canvasContext(layer.canvas);
@@ -5812,6 +6096,7 @@ export class SuperPhotoEditor {
     window.addEventListener('pointermove', (event) => this.onPointerMove(event));
     window.addEventListener('pointerup', (event) => this.onPointerUp(event));
     window.addEventListener('pointercancel', (event) => this.onPointerUp(event));
+    this.bindTouchGestures();
     this.viewport.addEventListener('pointerleave', () => {
       if (!this.drag) {
         this.pointerInside = false;

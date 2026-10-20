@@ -35,6 +35,9 @@ import PluginPanel from '../components/PluginPanel.astro';
   <OpenPlacementDialog />
   <PreferencesDialog />
   <div class="toast-host" id="toast-host" aria-live="polite"></div>
+  <!-- Voile des tiroirs latéraux : sur écran étroit, toucher la toile ferme
+       le panneau ouvert. Invisible et inerte sur grand écran. -->
+  <div class="panel-scrim" id="panel-scrim" hidden></div>
 
   <script>
     import { startSuperPhoto } from '../lib/editor';

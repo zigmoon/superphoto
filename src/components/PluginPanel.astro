@@ -3,7 +3,11 @@ import BrandMark from './BrandMark.astro';
 ---
 <!-- Greffons : trappe ancrée à droite, comme les panneaux de SuperPrint.
      Elle pousse la toile au lieu de la recouvrir, et suit donc les panneaux
-     latéraux déjà en place. -->
+     latéraux déjà en place.
+
+     Chaque effet est un soufflet : son nom, puis ses réglages repliés dessous.
+     Un seul est ouvert à la fois, ce qui garde la trappe courte et lisible —
+     aucun texte descriptif ne vient allonger la liste. -->
 <aside class="sidebar plugin-sidebar" id="plugin-sidebar" aria-label="Plug-in" hidden>
   <div class="sidebar-head plugin-head">
     <div class="plugin-head-copy">
@@ -16,29 +20,15 @@ import BrandMark from './BrandMark.astro';
   </div>
 
   <div class="plugin-scroll">
-    <p class="plugin-subtitle" id="plugin-subtitle" data-i18n="plugin.subtitle">
-      Glitch and film damage, rendered on your machine. The preview is live on the canvas.
-    </p>
-
-    <div class="plugin-effects" id="plugin-effects" role="listbox" aria-label="Effects"></div>
-
-    <div class="plugin-panel">
-      <div class="plugin-effect-head">
-        <h3 id="plugin-effect-name">—</h3>
-        <p id="plugin-effect-desc" class="plugin-effect-desc"></p>
-      </div>
-      <div class="plugin-params" id="plugin-params"></div>
-    </div>
-
-    <div class="plugin-note">
-      <BrandMark decorative />
-      <span id="plugin-target">—</span>
-    </div>
+    <div class="plugin-effects" id="plugin-effects" role="list"></div>
   </div>
 
   <footer class="plugin-foot">
+    <div class="plugin-target" id="plugin-target-wrap">
+      <BrandMark decorative />
+      <span id="plugin-target">—</span>
+    </div>
     <button class="btn ghost sm" id="plugin-reset" data-i18n="common.reset">Reset</button>
-    <span class="foot-spacer"></span>
     <button class="btn ghost sm" id="plugin-cancel" data-i18n="common.cancel">Cancel</button>
     <button class="btn primary sm" id="plugin-apply" data-i18n="plugin.applyShort">Apply</button>
   </footer>

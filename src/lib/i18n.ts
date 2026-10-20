@@ -796,6 +796,11 @@ const D: Record<string, [string, string, string]> = {
   'plugin.applyShort': ['Apply', 'Appliquer', '適用'],
   'plugin.effectsCount': ['effects', 'effets', 'エフェクト'],
   'plugin.target': ['Active layer: {name}', 'Calque actif : {name}', 'アクティブレイヤー：{name}'],
+  'plugin.emptyLayer': [
+    'Empty layer — pick the image layer',
+    'Calque vide — choisissez le calque de l’image',
+    '空のレイヤー — 画像レイヤーを選んでください',
+  ],
   'plugin.history': ['Effect · {name}', 'Effet · {name}', 'エフェクト · {name}'],
   'plugin.applied': ['{name} applied', '{name} appliqué', '{name} を適用しました'],
   'plugin.enabled': ['{name} enabled', '{name} activé', '{name} を有効化'],
