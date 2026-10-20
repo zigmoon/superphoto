@@ -494,7 +494,7 @@ const D: Record<string, [string, string, string]> = {
   'menu.maskFromSelection': ['Mask from the selection', 'Masque depuis la sélection', '選択範囲からマスク'],
   'menu.applyMask': ['Apply the mask', 'Appliquer le masque', 'マスクを適用'],
   'menu.invertMask': ['Invert the mask', 'Inverser le masque', 'マスクを反転'],
-  'menu.duplicateMask': ['Duplicate the mask', 'Dupliquer le masque', 'マスクを複製'],
+  'menu.duplicateMask': ['Mask onto a new layer', 'Masque sur un nouveau calque', 'マスクを新規レイヤーへ'],
   'menu.deleteMask': ['Delete the mask', 'Supprimer le masque', 'マスクを削除'],
   'menu.enableMask': ['Enable the mask', 'Activer le masque', 'マスクを有効化'],
   'menu.disableMask': ['Disable the mask', 'Désactiver le masque', 'マスクを無効化'],
