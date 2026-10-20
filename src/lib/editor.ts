@@ -1857,10 +1857,10 @@ export class SuperPhotoEditor {
     this.setText('doc-name', doc?.name ?? t('tabs.none'));
     this.setText(
       'doc-meta',
-      doc ? `${doc.width} × ${doc.height} px · ${Math.round(doc.dpi)} ppp · ${mode}` : '—',
+      doc ? `${doc.width} × ${doc.height} px · ${Math.round(doc.dpi)} ${t('common.dpi')} · ${mode}` : '—',
     );
     this.setText('doc-size', doc ? `${doc.width} × ${doc.height} px` : '—');
-    this.setText('doc-dpi', doc ? `${Math.round(doc.dpi)} ppp` : '—');
+    this.setText('doc-dpi', doc ? `${Math.round(doc.dpi)} ${t('common.dpi')}` : '—');
     this.setText('doc-layers', doc ? String(doc.layers.length) : '—');
     this.setText('doc-profile', doc ? t(`mode.profile.${doc.colorMode ?? 'rgb'}`) : t('layers.profile'));
 
@@ -5548,7 +5548,7 @@ export class SuperPhotoEditor {
 
   private openResizeDialog(mode: 'image' | 'canvas'): void {
     if (!this.doc) {
-      this.toast('Ouvrez un document.', 'error');
+      this.toast(t('msg.openFirst'), 'error');
       return;
     }
     if (this.adjustment) {
@@ -5567,6 +5567,7 @@ export class SuperPhotoEditor {
     this.resizeRatioLock = mode === 'image';
     this.resizeAnchor = { x: 0.5, y: 0.5 };
     byId('resize-title').textContent = mode === 'image' ? t('resize.imageTitle') : t('resize.canvasTitle');
+    byId('resize-kicker').textContent = mode === 'image' ? t('resize.imageKicker') : t('resize.canvasKicker');
     byId('resize-subtitle').textContent = mode === 'image'
       ? t('resize.imageSubtitle')
       : t('resize.canvasSubtitle');

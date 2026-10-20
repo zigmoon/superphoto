@@ -239,7 +239,7 @@ const D: Record<string, [string, string, string]> = {
   'adjust.saturation': ['Saturation', 'Saturation', '彩度'],
   'adjust.hue': ['Hue', 'Teinte', '色相'],
   'adjust.temperature': ['Temperature', 'Température', '色温度'],
-  'adjust.tint': ['Tint', 'Tint', '色かぶり補正'],
+  'adjust.tint': ['Tint', 'Teinte', '色かぶり補正'],
   'adjust.inBlack': ['Black point', 'Point noir', '黒レベル入力'],
   'adjust.inWhite': ['White point', 'Point blanc', '白レベル入力'],
   'adjust.gamma': ['Gamma', 'Gamma', 'ガンマ'],

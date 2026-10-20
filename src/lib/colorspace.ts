@@ -17,6 +17,7 @@
  */
 import type { ColorMode, PhotoDoc } from './types';
 import { canvasContext } from './utils';
+import { t } from './i18n';
 
 /** Limite de couverture totale d'encre, en fraction (≈ 300 %). */
 const TOTAL_INK_LIMIT = 3;
@@ -36,9 +37,8 @@ export function colorModeLabelKey(mode: ColorMode): string {
 
 /** Libellé court utilisé dans la barre de titre et le résumé d'export. */
 export function colorModeShort(mode: ColorMode | undefined): string {
-  if (mode === 'cmyk') return 'CMYK';
-  if (mode === 'gray') return 'Gray';
-  return 'RGB';
+  // Traduit : « RGB / CMYK / Gray » devient « RVB / CMJN / N&B » en français.
+  return t(colorModeLabelKey(mode ?? 'rgb'));
 }
 
 /**
