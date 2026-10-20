@@ -35,6 +35,7 @@ import {
 } from './document';
 import { History } from './history';
 import { epsFromDocument } from './eps';
+import { bmpFromCanvas } from './bmp';
 import {
   extensionForMime,
   isTauri,
@@ -43,8 +44,9 @@ import {
   readNativeImage,
   sanitizeFilename,
   saveExport,
+  supportsAvifExport,
 } from './io';
-import { createMask, drawMaskThumb, flattenMask } from './mask';
+import { createMask, drawMaskedLayer, drawMaskThumb, flattenMask, invertMask } from './mask';
 import {
   brushColorForMask,
   cloneStamp,
@@ -222,7 +224,7 @@ interface ToolInfo {
   cursor: string;
 }
 
-type ExportFormat = 'png' | 'jpeg' | 'webp' | 'tiff' | 'psd' | 'eps' | 'sps';
+type ExportFormat = 'png' | 'jpeg' | 'webp' | 'avif' | 'bmp' | 'tiff' | 'psd' | 'eps' | 'sps';
 
 /**
  * Session d'un effet de greffon : comme pour les réglages, l'aperçu travaille
@@ -401,6 +403,18 @@ interface DocTab {
   maskCache: { key: string; mask: SelectionMask } | null;
   coverageCache: { key: string; data: Uint8ClampedArray } | null;
 }
+
+/** Entrée d'un menu contextuel. `null` dans un groupe = séparateur. */
+interface MenuItem {
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  /** Coche l'entrée (masque actif, calque verrouillé…). */
+  checked?: boolean;
+  run: () => void;
+}
+
+type MenuGroup = Array<MenuItem | null>;
 
 export class SuperPhotoEditor {
   private tabs: DocTab[] = [];
@@ -4092,6 +4106,19 @@ export class SuperPhotoEditor {
 
     this.bindLayerDrag();
 
+    this.layersList.addEventListener('contextmenu', (event) => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id]');
+      const layerId = row?.dataset.layerId;
+      if (!row || !layerId || !this.doc) return;
+      const layer = this.doc.layers.find((item) => item.id === layerId);
+      if (!layer) return;
+      event.preventDefault();
+      // Un clic droit sur un calque non sélectionné le sélectionne : sans cela
+      // le menu agirait sur un autre calque que celui qu'on vise.
+      if (!this.selectedLayerIds.has(layerId)) this.selectLayer(layerId);
+      this.openLayerMenu(event, layer);
+    });
+
     this.layersList.addEventListener('dblclick', (event) => {
       const row = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id]');
       if (!row) return;
@@ -4429,7 +4456,8 @@ export class SuperPhotoEditor {
       return;
     }
     if (this.adjustment) this.cancelAdjustment();
-    const mask = createMask(doc.width, doc.height);
+    const fromSelection = this.maskFromSelection();
+    const mask = fromSelection ?? createMask(doc.width, doc.height);
     layer.mask = mask;
     layer.maskEnabled = true;
     layer.maskEditing = true;
@@ -4514,8 +4542,259 @@ export class SuperPhotoEditor {
     this.setMessage(t('msg.maskDeleted'));
   }
 
-  private selectLayer(layerId: string, additive = false): void {
-    if (!this.doc) return;
+  /**
+   * Ajoute un masque calculé depuis la sélection : blanc dans la sélection,
+   * noir (masqué) autour. C'est le geste attendu quand on détoure puis qu'on
+   * demande un masque — sans lui, le masque naît blanc et ne change rien, ce
+   * qui donne l'impression que la fonction ne marche pas.
+   */
+  private maskFromSelection(): HTMLCanvasElement | null {
+    const doc = this.doc;
+    const selection = this.selection;
+    if (!doc || !selection) return null;
+    const mask = createCanvas(doc.width, doc.height);
+    const ctx = canvasContext(mask);
+    const geometry = selectionPath(selection, doc.width, doc.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill(geometry.path, geometry.rule);
+    return mask;
+  }
+
+  private invertActiveMask(): void {
+    const layer = this.activeLayer;
+    if (!layer?.mask) return;
+    const mask = layer.mask;
+    invertMask(mask);
+    this.history.push({
+      label: t('menu.invertMask'),
+      undo: () => {
+        invertMask(mask);
+        this.renderAll();
+      },
+      redo: () => {
+        invertMask(mask);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.setMessage(t('msg.maskInverted'));
+  }
+
+  private duplicateActiveMask(): void {
+    const layer = this.activeLayer;
+    if (!layer?.mask) return;
+    // Photoshop duplique le masque sur un nouveau calque : ici le calque porte
+    // déjà un masque, on en pose donc une copie sur le calque du dessus.
+    const doc = this.doc;
+    if (!doc) return;
+    const copy = createLayer(`${layer.name} ${t('layers.mask')}`, doc.width, doc.height);
+    const ctx = canvasContext(copy.canvas);
+    drawMaskedLayer(ctx, layer);
+    copy.name = `${layer.name} · ${t('layers.mask')}`;
+    const previousActive = doc.activeLayerId;
+    const index = doc.layers.findIndex((item) => item.id === layer.id);
+    doc.layers.splice(index + 1, 0, copy);
+    doc.activeLayerId = copy.id;
+    this.selectedLayerIds = new Set([copy.id]);
+    this.history.push({
+      label: t('menu.duplicateMask'),
+      undo: () => {
+        const current = doc.layers.findIndex((item) => item.id === copy.id);
+        if (current >= 0) doc.layers.splice(current, 1);
+        doc.activeLayerId = previousActive;
+        this.selectedLayerIds = new Set([previousActive]);
+        this.renderAll();
+      },
+      redo: () => {
+        doc.layers.splice(index + 1, 0, copy);
+        doc.activeLayerId = copy.id;
+        this.selectedLayerIds = new Set([copy.id]);
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.setMessage(t('msg.maskDuplicated'));
+  }
+
+  private setMaskEnabled(layer: Layer, enabled: boolean): void {
+    if (!layer.mask) return;
+    const before = layer.maskEnabled !== false;
+    layer.maskEnabled = enabled;
+    this.history.push({
+      label: enabled ? t('msg.maskEnable') : t('msg.maskDisable'),
+      undo: () => {
+        layer.maskEnabled = before;
+        this.renderAll();
+      },
+      redo: () => {
+        layer.maskEnabled = enabled;
+        this.renderAll();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.setMessage(enabled ? t('msg.maskOn') : t('msg.maskOff'));
+  }
+
+  private toggleLayerVisibility(layer: Layer): void {
+    const before = layer.visible;
+    layer.visible = !before;
+    this.history.push({
+      label: before ? t('layers.hide') : t('layers.show'),
+      undo: () => {
+        layer.visible = before;
+        this.renderAll();
+      },
+      redo: () => {
+        layer.visible = !before;
+        this.renderAll();
+      },
+    });
+    this.renderAll();
+  }
+
+  /** Renomme la ligne visée : le champ de propriétés prend le focus. */
+  private renameLayer(layer: Layer): void {
+    if (this.doc && this.doc.activeLayerId !== layer.id) this.selectLayer(layer.id);
+    const input = byId<HTMLInputElement>('layer-name');
+    input.focus();
+    input.select();
+  }
+
+  private selectAllLayers(): void {
+    const doc = this.doc;
+    if (!doc) return;
+    this.selectedLayerIds = new Set(doc.layers.map((layer) => layer.id));
+    this.renderLayers();
+    this.renderToolOptions();
+    this.renderOverlay();
+    this.updateStatus();
+    this.setMessage(t('msg.layersSelected', { n: doc.layers.length }));
+  }
+
+  private clearLayerSelection(): void {
+    const doc = this.doc;
+    if (!doc) return;
+    this.selectedLayerIds = new Set([doc.activeLayerId]);
+    this.renderLayers();
+    this.renderToolOptions();
+    this.renderOverlay();
+    this.updateStatus();
+  }
+
+  /** Fusionne tous les calques visibles en un seul, à la place du plus haut. */
+  private mergeVisibleLayers(): void {
+    const doc = this.doc;
+    if (!doc) return;
+    const visible = doc.layers.filter((layer) => layer.visible);
+    if (visible.length < 2) {
+      this.toast(t('msg.mergeVisibleNone'), 'info');
+      return;
+    }
+    this.commitMerge(doc, visible, t('menu.mergeVisible'));
+  }
+
+  private flattenImage(): void {
+    const doc = this.doc;
+    if (!doc) return;
+    if (doc.layers.length < 2) {
+      this.toast(t('msg.flattenNone'), 'info');
+      return;
+    }
+    this.commitMerge(doc, doc.layers.filter((layer) => layer.visible), t('menu.flattenImage'), true);
+  }
+
+  /**
+   * Compose une liste de calques dans un calque unique. L'aplatissement règle
+   * en plus le fond du document sur blanc : c'est ce que produit Photoshop, et
+   * cela évite un document transparent inattendu après « Aplatir ».
+   */
+  private commitMerge(doc: PhotoDoc, layers: Layer[], label: string, flatten = false): void {
+    const merged = createLayer(label, doc.width, doc.height);
+    const ctx = canvasContext(merged.canvas);
+    if (flatten && doc.background !== 'transparent') {
+      ctx.fillStyle = doc.background === 'black' ? '#000000' : '#ffffff';
+      ctx.fillRect(0, 0, doc.width, doc.height);
+    }
+    for (const layer of layers) {
+      ctx.globalAlpha = layer.opacity;
+      ctx.globalCompositeOperation = layer.blend;
+      drawMaskedLayer(ctx, layer);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    merged.opacity = 1;
+    merged.blend = 'source-over';
+    merged.visible = true;
+
+    const firstIndex = Math.min(...layers.map((layer) => doc.layers.indexOf(layer)));
+    const after: Layer[] = flatten
+      ? [merged]
+      : [
+          ...doc.layers.slice(0, firstIndex),
+          merged,
+          ...doc.layers.slice(firstIndex).filter((layer) => !layers.includes(layer)),
+        ];
+    const before = doc.layers.slice();
+    const beforeActive = doc.activeLayerId;
+
+    const apply = (state: Layer[], activeId: string, message: string | null): void => {
+      doc.layers = state.slice();
+      doc.activeLayerId = activeId;
+      this.selectedLayerIds = new Set([activeId]);
+      this.layersDirty = true;
+      this.renderAll();
+      if (message) this.setMessage(message);
+    };
+
+    apply(after, merged.id, label);
+    this.history.push({
+      label,
+      undo: () => apply(before, beforeActive, null),
+      redo: () => apply(after, merged.id, null),
+    });
+  }
+
+  /**
+   * Rasterise un calque texte / forme / tracé : les métadonnées éditables sont
+   * retirées, les pixels restent tels quels. Rien à recalculer, mais l'action
+   * est irréversible côté édition, donc elle entre dans l'historique.
+   */
+  private rasterizeActiveLayer(): void {
+    const layer = this.activeLayer;
+    if (!layer || layer.kind === 'raster') return;
+    const kind = layer.kind;
+    const text = layer.text;
+    const path = layer.path;
+    layer.kind = 'raster';
+    layer.text = undefined;
+    layer.path = undefined;
+    this.history.push({
+      label: t('menu.rasterizeLayer'),
+      undo: () => {
+        layer.kind = kind;
+        layer.text = text;
+        layer.path = path;
+        this.renderAll();
+        this.renderToolOptions();
+      },
+      redo: () => {
+        layer.kind = 'raster';
+        layer.text = undefined;
+        layer.path = undefined;
+        this.renderAll();
+        this.renderToolOptions();
+      },
+    });
+    this.layersDirty = true;
+    this.renderAll();
+    this.renderToolOptions();
+    this.setMessage(t('msg.rasterized', { name: layer.name }));
+  }
+
+  private selectLayer(layerId: string, additive = false): void {    if (!this.doc) return;
     if (this.adjustment) this.cancelAdjustment();
     // Maj / Ctrl + clic : on ajoute ou on retire de la sélection multiple.
     if (additive) {
@@ -5691,10 +5970,25 @@ export class SuperPhotoEditor {
     if (profile) profile.textContent = t(`mode.profile.${this.doc.colorMode ?? 'rgb'}`);
     this.updateExportFormatUI();
     this.exportModal.classList.add('is-open');
+    void this.syncAvifAvailability();
     window.setTimeout(() => {
       filename.focus();
       filename.select();
     }, 60);
+  }
+
+  /** Active ou retire la carte AVIF selon ce que le navigateur sait encoder. */
+  private async syncAvifAvailability(): Promise<void> {
+    const card = this.exportModal.querySelector<HTMLButtonElement>('[data-format="avif"]');
+    if (!card) return;
+    const supported = await supportsAvifExport();
+    card.disabled = !supported;
+    card.classList.toggle('is-unavailable', !supported);
+    card.title = supported ? '' : t('export.avifUnavailable');
+    if (!supported && this.exportFormat === 'avif') {
+      this.exportFormat = 'webp';
+      this.updateExportFormatUI();
+    }
   }
 
   private closeExportDialog(): void {
@@ -5705,10 +5999,12 @@ export class SuperPhotoEditor {
     for (const button of this.exportModal.querySelectorAll<HTMLElement>('[data-format]')) {
       button.classList.toggle('is-active', button.dataset.format === this.exportFormat);
     }
-    // Le réglage de qualité n'a de sens qu'en JPEG et WebP : les autres formats
-    // sont soit sans perte, soit structurés (PSD, TIFF, EPS, projet).
+    // Le réglage de qualité n'a de sens qu'en JPEG, WebP et AVIF : les autres
+    // formats sont soit sans perte, soit structurés (PSD, TIFF, EPS, projet).
     byId('export-quality-row').hidden =
-      this.exportFormat !== 'jpeg' && this.exportFormat !== 'webp';
+      this.exportFormat !== 'jpeg' &&
+      this.exportFormat !== 'webp' &&
+      this.exportFormat !== 'avif';
     const filename = byId<HTMLInputElement>('export-filename');
     const base = stripExtension(filename.value.trim() || 'superphoto');
     const extension = this.exportFormat === 'jpeg' ? 'jpg' : this.exportFormat;
@@ -5792,11 +6088,20 @@ export class SuperPhotoEditor {
     if (format === 'eps') {
       return epsFromDocument(doc, compositeCanvas(doc, '#ffffff'));
     }
-    return canvasToBlob(
+    if (format === 'bmp') {
+      return bmpFromCanvas(compositeCanvas(doc, null), doc.background === 'black' ? '#000000' : '#ffffff');
+    }
+    const blob = await canvasToBlob(
       compositeCanvas(doc, format === 'png' ? null : '#ffffff'),
       mime,
       quality,
     );
+    // `toBlob` ignore un type qu'il ne sait pas encoder et renvoie du PNG :
+    // mieux vaut refuser que livrer un fichier qui ment sur son contenu.
+    if (format === 'avif' && blob.type !== 'image/avif') {
+      throw new Error(t('export.avifUnavailable'));
+    }
+    return blob;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -6166,101 +6471,270 @@ export class SuperPhotoEditor {
   }
 
   /**
-   * Clic droit dans la toile : les actions de sélection à portée de main, dont
-   * « Remplir la sélection ». Le menu reste sobre et se ferme au premier clic
-   * extérieur, à Échap ou au défilement.
+   * Clic droit dans la toile : les actions de sélection à portée de main, les
+   * réglages du calque actif et les commandes de document. Le menu reste sobre
+   * et se ferme au premier clic extérieur, à Échap ou au défilement.
    */
   private openCanvasMenu(event: MouseEvent): void {
     const doc = this.doc;
     if (!doc || this.adjustment) return;
-    this.closeCanvasMenu();
     const selection = this.selection;
     const bounds = selection ? selectionBounds(selection) : null;
     const feather = selection ? selectionFeather(selection) : 0;
+    const layer = this.activeLayer;
+    const hasSelection = Boolean(selection);
+    const hint = this.shortcutHint.bind(this);
 
+    this.showMenu(
+      event,
+      t('menu.label'),
+      selection && bounds
+        ? t(feather ? 'status.feather' : 'status.selection', {
+            w: Math.round(bounds.w),
+            h: Math.round(bounds.h),
+            f: feather,
+          })
+        : t('menu.noSelection'),
+      [
+        [
+          {
+            label: t('menu.fill'),
+            hint: hint('alt-backspace'),
+            disabled: !hasSelection,
+            run: () => this.fillSelection(this.primaryColor),
+          },
+          {
+            label: t('msg.eraseContent'),
+            hint: hint('delete'),
+            disabled: !hasSelection,
+            run: () => this.clearSelectionContent(),
+          },
+          {
+            label: t('menu.copyLayer'),
+            hint: hint('ctrl-j'),
+            disabled: !layer,
+            run: () => this.duplicateActiveLayer(),
+          },
+        ],
+        [
+          {
+            label: t('menu.invert'),
+            disabled: !hasSelection,
+            run: () => this.handleAction('invert-selection'),
+          },
+          {
+            label: t('menu.deselect'),
+            hint: hint('esc'),
+            disabled: !hasSelection,
+            run: () => this.handleAction('deselect'),
+          },
+          {
+            label: t('menu.selectAll'),
+            hint: hint('ctrl-a'),
+            run: () => this.handleAction('select-all'),
+          },
+        ],
+        [
+          { label: t('menu.adjustTonality'), run: () => this.handleAction('adjust-tonality') },
+          { label: t('menu.adjustContrast'), run: () => this.handleAction('adjust-contrast') },
+          { label: t('menu.adjustColor'), run: () => this.handleAction('adjust-color') },
+          { label: t('menu.adjustLevels'), run: () => this.handleAction('adjust-levels') },
+          { label: t('menu.adjustCurves'), run: () => this.handleAction('adjust-curves') },
+        ],
+        [
+          { label: t('menu.imageSize'), run: () => this.handleAction('image-size') },
+          { label: t('menu.canvasSize'), run: () => this.handleAction('canvas-size') },
+          { label: t('menu.zoomFit'), run: () => this.handleAction('zoom-fit') },
+        ],
+      ],
+    );
+  }
+
+  /**
+   * Clic droit sur une ligne de calque : tout ce qu'on attend d'une pile
+   * Photoshop — renommer, dupliquer, fusionner, aplatir, masque, verrou,
+   * rasterisation, sélection multiple. Les actions s'appliquent d'abord à la
+   * ligne cliquée, jamais au calque actif par accident.
+   */
+  private openLayerMenu(event: MouseEvent, layer: Layer): void {
+    const doc = this.doc;
+    if (!doc) return;
+    const multi = this.selectedLayerIds.size > 1 && this.selectedLayerIds.has(layer.id);
+    const targets = multi ? this.selectedLayers() : [layer];
+    if (!multi && doc.activeLayerId !== layer.id) this.selectLayer(layer.id);
+    const mask = layer.mask;
+    const selection = this.selection;
+    const hint = this.shortcutHint.bind(this);
+
+    this.showMenu(
+      event,
+      t('menu.layerLabel'),
+      multi ? t('menu.layerCount', { n: targets.length }) : layer.name,
+      [
+        [
+          {
+            label: t('menu.renameLayer'),
+            hint: hint('f2'),
+            disabled: multi,
+            run: () => this.renameLayer(layer),
+          },
+          {
+            label: t('menu.duplicateLayer'),
+            hint: hint('ctrl-j'),
+            run: () => this.duplicateActiveLayer(),
+          },
+          {
+            label: t('menu.deleteLayer'),
+            hint: hint('delete'),
+            run: () => this.deleteActiveLayer(),
+          },
+          {
+            label: layer.visible ? t('menu.hideLayer') : t('menu.showLayer'),
+            run: () => this.toggleLayerVisibility(layer),
+          },
+        ],
+        [
+          {
+            label: selection ? t('menu.maskFromSelection') : t('menu.addMask'),
+            disabled: Boolean(mask),
+            run: () => this.toggleMaskForActiveLayer(),
+          },
+          {
+            label: t('menu.applyMask'),
+            disabled: !mask || multi,
+            run: () => this.applyActiveMask(),
+          },
+          {
+            label: t('menu.invertMask'),
+            disabled: !mask || multi,
+            run: () => this.invertActiveMask(),
+          },
+          {
+            label: t('menu.duplicateMask'),
+            disabled: !mask || multi,
+            run: () => this.duplicateActiveMask(),
+          },
+          {
+            label: t('menu.deleteMask'),
+            disabled: !mask || multi,
+            run: () => this.deleteActiveMask(),
+          },
+          {
+            label: layer.maskEnabled === false ? t('menu.enableMask') : t('menu.disableMask'),
+            disabled: !mask || multi,
+            checked: Boolean(mask) && layer.maskEnabled !== false,
+            run: () => this.setMaskEnabled(layer, layer.maskEnabled === false),
+          },
+        ],
+        [
+          {
+            label: t('menu.mergeDown'),
+            hint: hint('ctrl-e'),
+            disabled: doc.layers.indexOf(layer) === 0,
+            run: () => this.mergeDown(),
+          },
+          { label: t('menu.mergeVisible'), run: () => this.mergeVisibleLayers() },
+          { label: t('menu.flattenImage'), run: () => this.flattenImage() },
+        ],
+        [
+          {
+            label: t('menu.rasterizeLayer'),
+            disabled: layer.kind === 'raster' || multi,
+            run: () => this.rasterizeActiveLayer(),
+          },
+          {
+            label: layer.locked ? t('menu.unlockLayer') : t('menu.lockLayer'),
+            checked: Boolean(layer.locked),
+            run: () => this.toggleLayerLock(layer),
+          },
+        ],
+        [
+          {
+            label: t('menu.selectAllLayers'),
+            hint: hint('ctrl-alt-a'),
+            run: () => this.selectAllLayers(),
+          },
+          {
+            label: t('menu.clearLayerSelection'),
+            disabled: this.selectedLayerIds.size <= 1,
+            run: () => this.clearLayerSelection(),
+          },
+        ],
+      ],
+    );
+  }
+
+  /** Raccourci localisé, pour les menus contextuels. */
+  private shortcutHint(key: string): string {
+    return t(`key.${key}`);
+  }
+
+  /**
+   * Construit et positionne un menu contextuel. Un seul menu à la fois, fermé
+   * au clic extérieur, à Échap, au défilement et au redimensionnement.
+   */
+  private showMenu(
+    event: MouseEvent,
+    label: string,
+    head: string | null,
+    groups: MenuGroup[],
+  ): void {
+    event.preventDefault();
+    this.closeCanvasMenu();
     const menu = document.createElement('div');
     menu.className = 'canvas-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', t('menu.label'));
+    menu.setAttribute('aria-label', label);
 
-    const head = document.createElement('div');
-    head.className = 'canvas-menu-head';
-    head.textContent = selection && bounds
-      ? t(feather ? 'status.feather' : 'status.selection', { w: Math.round(bounds.w), h: Math.round(bounds.h), f: feather })
-      : t('menu.noSelection');
-    menu.appendChild(head);
+    if (head) {
+      const caption = document.createElement('div');
+      caption.className = 'canvas-menu-head';
+      caption.textContent = head;
+      menu.appendChild(caption);
+    }
 
-    const items: Array<
-      { label: string; hint?: string; disabled?: boolean; run: () => void } | null
-    > = [
-      {
-        label: t('menu.fill'),
-        hint: 'Alt+Retour',
-        disabled: !selection,
-        run: () => this.fillSelection(this.primaryColor),
-      },
-      {
-        label: t('msg.eraseContent'),
-        hint: 'Suppr',
-        disabled: !selection,
-        run: () => this.clearSelectionContent(),
-      },
-      null,
-      {
-        label: t('menu.invert'),
-        disabled: !selection,
-        run: () => {
-          if (!this.selection) return;
-          this.selection = { ...this.selection, invert: !this.selection.invert };
-          this.renderOverlay();
-          this.updateStatus();
-        },
-      },
-      {
-        label: t('menu.deselect'),
-        hint: 'Esc',
-        disabled: !selection,
-        run: () => {
-          this.selection = null;
-          this.renderOverlay();
-          this.renderToolOptions();
-          this.updateStatus();
-        },
-      },
-      {
-        label: t('menu.selectAll'),
-        hint: 'Ctrl+A',
-        run: () => this.handleAction('select-all'),
-      },
-    ];
-
-    for (const item of items) {
-      if (!item) {
+    groups.forEach((group, index) => {
+      if (index > 0) {
         const separator = document.createElement('div');
         separator.className = 'canvas-menu-sep';
         separator.setAttribute('role', 'separator');
         menu.appendChild(separator);
-        continue;
       }
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'canvas-menu-item';
-      button.setAttribute('role', 'menuitem');
-      button.disabled = Boolean(item.disabled);
-      const label = document.createElement('span');
-      label.textContent = item.label;
-      button.appendChild(label);
-      if (item.hint) {
-        const hint = document.createElement('kbd');
-        hint.textContent = item.hint;
-        button.appendChild(hint);
+      for (const item of group) {
+        if (!item) {
+          const separator = document.createElement('div');
+          separator.className = 'canvas-menu-sep';
+          separator.setAttribute('role', 'separator');
+          menu.appendChild(separator);
+          continue;
+        }
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'canvas-menu-item';
+        button.setAttribute('role', item.checked === undefined ? 'menuitem' : 'menuitemcheckbox');
+        if (item.checked !== undefined) button.setAttribute('aria-checked', String(item.checked));
+        button.disabled = Boolean(item.disabled);
+        const text = document.createElement('span');
+        text.textContent = item.label;
+        button.appendChild(text);
+        if (item.hint) {
+          const key = document.createElement('kbd');
+          key.textContent = item.hint;
+          button.appendChild(key);
+        }
+        if (item.checked) {
+          const check = document.createElement('span');
+          check.className = 'canvas-menu-check';
+          check.textContent = '●';
+          button.appendChild(check);
+        }
+        button.addEventListener('click', () => {
+          this.closeCanvasMenu();
+          item.run();
+        });
+        menu.appendChild(button);
       }
-      button.addEventListener('click', () => {
-        this.closeCanvasMenu();
-        item.run();
-      });
-      menu.appendChild(button);
-    }
+    });
 
     menu.style.visibility = 'hidden';
     document.body.appendChild(menu);
@@ -9208,7 +9682,7 @@ export class SuperPhotoEditor {
         name: stripExtension(name) || 'Image',
         width,
         height,
-        dpi: 72,
+        dpi: media.dpi && media.dpi >= 10 ? media.dpi : 72,
         background: 'transparent',
         colorMode: 'rgb',
         layers: [layer],

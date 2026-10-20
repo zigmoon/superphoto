@@ -95,6 +95,36 @@ export function cloneMask(mask: HTMLCanvasElement): HTMLCanvasElement {
   return copy;
 }
 
+/**
+ * Inverse un masque : ce qui était visible devient masqué et réciproquement.
+ *
+ * L'information d'un masque est portée par l'**alpha** : inverser revient donc
+ * à compléter l'alpha pixel par pixel, sans toucher à la couleur. On passe par
+ * l'arithmétique du canvas plutôt que par une boucle sur 8 millions de pixels
+ * quand c'est possible, mais `difference` ne sait pas compléter un alpha : la
+ * boucle reste la seule option exacte, et elle est rapide (une passe linéaire).
+ */
+export function invertMask(mask: HTMLCanvasElement): void {
+  const ctx = canvasContext(mask);
+  const image = ctx.getImageData(0, 0, mask.width, mask.height);
+  const data = image.data;
+  for (let index = 3; index < data.length; index += 4) {
+    data[index] = 255 - (data[index] ?? 0);
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+/** Remplit un masque : blanc = tout visible, noir = tout masqué. */
+export function fillMask(mask: HTMLCanvasElement, visible: boolean): void {
+  const ctx = canvasContext(mask);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, mask.width, mask.height);
+  if (visible) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, mask.width, mask.height);
+  }
+}
+
 /** Aplatit le masque dans les pixels : le calque garde exactement son rendu. */
 export function flattenMask(layer: Layer): void {
   if (!layer.mask) return;

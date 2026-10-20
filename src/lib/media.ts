@@ -8,6 +8,7 @@
  *   • vidéo (MP4, WebM, MOV…) : on dessine la première image décodable ;
  *   • HEIC/HEIF : le décodeur système peut répondre, sinon on explique.
  */
+import { looksLikeTiff, parseTiff, TIFF_MIME } from './tiff';
 
 export const IMAGE_EXTENSIONS = [
   'png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'avif', 'gif', 'bmp', 'dib',
@@ -48,6 +49,8 @@ export function isSupportedMedia(file: { name: string; type?: string }): boolean
 export interface DecodedMedia {
   width: number;
   height: number;
+  /** Résolution déclarée par le fichier, quand il en porte une. */
+  dpi?: number;
   /** Dessine le média dans un contexte 2D, à la taille demandée. */
   draw: (ctx: CanvasRenderingContext2D, width: number, height: number) => void;
   /** Libère les ressources (Bitmap, ImageBitmap, URL temporaire…). */
@@ -134,6 +137,28 @@ async function decodeVideo(blob: Blob): Promise<DecodedMedia> {
 }
 
 /**
+ * Un TIFF n'est décodé par aucun navigateur : on le lit nous-mêmes. Le format
+ * revient souvent dans un atelier (scan, appareil, export d'un confrère), donc
+ * l'ouverture doit marcher pour de vrai, LZW et prédicteur compris.
+ */
+async function decodeTiffBlob(blob: Blob): Promise<DecodedMedia> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const { canvas, dpi } = await parseTiff(bytes);
+  return {
+    width: canvas.width,
+    height: canvas.height,
+    dpi,
+    draw: (ctx, width, height) => ctx.drawImage(canvas, 0, 0, width, height),
+    release: () => {},
+  };
+}
+
+async function sniffTiff(blob: Blob): Promise<boolean> {
+  if (blob.size < 4) return false;
+  return looksLikeTiff(new Uint8Array(await blob.slice(0, 4).arrayBuffer()));
+}
+
+/**
  * Décode un média. `name` sert à choisir la bonne stratégie : le type MIME
  * fourni par le système de fichiers est souvent vide pour HEIC ou TIFF.
  */
@@ -144,12 +169,21 @@ export async function decodeMedia(blob: Blob, name: string): Promise<DecodedMedi
   if (extension === 'svg' || extension === 'svgz' || blob.type === 'image/svg+xml') {
     return decodeWithImageElement(blob);
   }
+  if (extension === 'tif' || extension === 'tiff' || blob.type === TIFF_MIME) {
+    return decodeTiffBlob(blob);
+  }
 
   try {
     return await decodeWithBitmap(blob);
-  } catch {
+  } catch (error) {
     // Repli : `<img>` couvre l'ICO, certains SVG et les codecs natifs que
     // `createImageBitmap` n'expose pas (HEIC sur Safari, par exemple).
-    return decodeWithImageElement(blob);
+    try {
+      return await decodeWithImageElement(blob);
+    } catch {
+      // Dernier filet : un TIFF renommé, ou livré sans extension.
+      if (await sniffTiff(blob)) return decodeTiffBlob(blob);
+      throw error;
+    }
   }
 }

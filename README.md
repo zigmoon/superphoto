@@ -121,8 +121,11 @@ without handles. Every new document opens with its **Background** layer already
 locked, exactly like Photoshop, so the backdrop cannot be painted over by
 accident; unlock it if you really mean to.
 
-**Layer masks** work like Photoshop's: add, paint, disable, re-enable, apply to
-pixels or remove.
+**Layer masks** work like Photoshop's: add, paint, disable, re-enable, invert,
+duplicate, apply to pixels or remove. When a selection is active, **Add a layer
+mask** builds the mask *from the selection* — white inside, hidden outside — so
+the mask does something the moment it appears instead of starting out as a blank
+white sheet.
 
 | Gesture on the mask thumbnail | Effect |
 | --- | --- |
@@ -131,7 +134,20 @@ pixels or remove.
 | Shift-click | Disable / re-enable the mask without deleting it |
 
 Painting with a light colour reveals, with a dark colour hides — the foreground
-swatch decides, so `X` flips between the two.
+swatch decides, so `X` flips between the two. Masks follow the document through
+image size, canvas size and crop, and they survive `.sps`, `.spp` and PSD
+round-trips (PSD stores them in channel `-2`, so Photoshop opens them as real
+layer masks).
+
+**Right-click a layer row** for the Photoshop stack menu: rename (`F2`),
+duplicate (`Ctrl+J`), delete, hide/show, mask from the selection, apply, invert,
+duplicate or delete the mask, enable/disable, merge down (`Ctrl+E`), merge
+visible, flatten, rasterize, lock, select all layers, keep only this one. On a
+multi-selection the commands apply to the whole group.
+
+**Right-click the canvas** for fill (`Alt+Backspace`), clear (`Delete`), layer via
+copy, invert/deselect/select all, the five adjustments, image size, canvas size
+and fit-to-window. Shortcut hints are localised, not hardcoded.
 
 ### Right column — Tools and adjustments
 
@@ -330,7 +346,9 @@ pixels, the same way Photoshop's mode conversion works:
 | **PNG** | Transparency, lossless |
 | **JPEG** | Flattened on white, quality slider |
 | **WebP** | Transparency, quality slider |
+| **AVIF** | Transparency, quality slider — only offered when the browser can really encode it, never faked with a PNG |
 | **TIFF** | Uncompressed baseline, resolution tag, RGB / RGBA / gray |
+| **BMP** | 24-bit BGR, rows padded to 4 bytes, flattened on the document background |
 | **EPS** | EPSF-3.0, flattened on white, vector-safe hex image data |
 | **PSD** | **Layered** Photoshop file: one RLE layer per layer, masks, opacity, blend modes, DPI |
 | **`.sps`** | **Everything**: layers, masks, opacity, blend modes, text and paths stay editable |
@@ -349,6 +367,27 @@ document's DPI (`Image → Image size` shows the real resolution). Layer groups
 are flattened into their parent, as SuperPhoto keeps a flat layer stack.
 CMYK documents are converted to the RGB working space on import, using the same
 ink simulation as the colour-mode switch.
+
+### Importing TIFF
+
+No browser decodes TIFF, so SuperPhoto reads it itself — that is the whole point
+of the format for a retoucher, and it now opens:
+
+- **compression**: none, LZW (with the horizontal predictor), Deflate/ZIP,
+  PackBits, and JPEG-in-TIFF with its `JPEGTables` header re-spliced per strip;
+- **layout**: strips *and* tiles, edge tiles read at their padded stride;
+- **depth and spaces**: 8- and 16-bit, RGB, RGBA, grayscale, black-is-zero and
+  CMYK (converted with the same ink arithmetic as the colour-mode switch);
+- **resolution**: the file's DPI is applied to the document.
+
+Verified against files written by libvips/Photoshop: LZW, ZIP, PackBits,
+uncompressed, tiled, 16-bit, grayscale and RGBA all decode **pixel-exact**. The
+one case that is refused instead of approximated is a **JPEG-compressed CMYK
+TIFF**, whose colours depend on the decoder's Adobe convention: SuperPhoto says
+so and asks for RGB or LZW rather than painting inverted colours.
+
+Export-side, everything above round-trips: `.sps`, `.spp`, PSD, TIFF, BMP, PNG,
+WebP, JPEG, EPS.
 
 
 ### Interface

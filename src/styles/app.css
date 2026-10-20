@@ -2380,6 +2380,9 @@ html.theme-dark .doc-tab.is-active {
   position: fixed;
   z-index: 140;
   min-width: 236px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 5px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
@@ -2447,6 +2450,13 @@ html.theme-dark .doc-tab.is-active {
   color: var(--text-faint);
   cursor: default;
   opacity: 0.55;
+}
+
+.canvas-menu-check {
+  margin-left: -6px;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--accent);
 }
 
 .canvas-menu-sep {
@@ -2665,12 +2675,16 @@ html.theme-dark .doc-tab.is-active {
   backdrop-filter: blur(6px) saturate(0.95);
   opacity: 0;
   visibility: hidden;
+  /* Une transition en cours ne doit jamais intercepter les clics : un
+     `visibility` figé laissait le fond capter la toile. */
+  pointer-events: none;
   transition: opacity 160ms var(--ease), visibility 160ms var(--ease);
 }
 
 .modal-backdrop.is-open {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
 }
 
 .dialog {
@@ -3164,6 +3178,16 @@ html.theme-dark .doc-tab.is-active {
   background: var(--accent-soft);
   border-color: var(--accent-line);
   color: var(--text);
+}
+
+/* Format que le moteur actuel ne sait pas écrire (AVIF sur certains
+   navigateurs) : visible, mais clairement hors service. */
+.format-card.is-unavailable,
+.format-card:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
 }
 
 .format-card.is-active strong {

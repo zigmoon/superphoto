@@ -197,6 +197,8 @@ export async function saveExport(
 export function extensionForMime(mime: string): string {
   if (mime === 'image/jpeg') return 'jpg';
   if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/avif') return 'avif';
+  if (mime === 'image/bmp') return 'bmp';
   if (mime === SPS_MIME) return 'sps';
   if (mime === SPP_MIME) return SPP_EXTENSION;
   if (mime === PSD_MIME) return 'psd';
@@ -205,12 +207,25 @@ export function extensionForMime(mime: string): string {
   return 'png';
 }
 
-export type ExportMime = 'png' | 'jpeg' | 'webp' | 'sps' | 'psd' | 'tiff' | 'eps';
+export type ExportMime =
+  | 'png'
+  | 'jpeg'
+  | 'webp'
+  | 'avif'
+  | 'bmp'
+  | 'sps'
+  | 'spp'
+  | 'psd'
+  | 'tiff'
+  | 'eps';
 
 export function mimeForFormat(format: ExportMime): string {
   if (format === 'jpeg') return 'image/jpeg';
   if (format === 'webp') return 'image/webp';
+  if (format === 'avif') return 'image/avif';
+  if (format === 'bmp') return 'image/bmp';
   if (format === 'sps') return SPS_MIME;
+  if (format === 'spp') return SPP_MIME;
   if (format === 'psd') return PSD_MIME;
   if (format === 'tiff') return TIFF_MIME;
   if (format === 'eps') return EPS_MIME;
@@ -219,6 +234,27 @@ export function mimeForFormat(format: ExportMime): string {
 
 export function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'superphoto';
+}
+
+/**
+ * Tous les navigateurs ne savent pas **encoder** l'AVIF : `toBlob` retombe
+ * alors silencieusement sur du PNG, ce qui produirait un fichier `.avif` qui
+ * n'en est pas un. On sonde donc une fois, et l'interface masque le format
+ * quand il n'est pas réellement disponible.
+ */
+let avifSupport: boolean | null = null;
+
+export async function supportsAvifExport(): Promise<boolean> {
+  if (avifSupport !== null) return avifSupport;
+  if (typeof document === 'undefined') return false;
+  const probe = document.createElement('canvas');
+  probe.width = 2;
+  probe.height = 2;
+  const blob = await new Promise<Blob | null>((resolve) => {
+    probe.toBlob((value) => resolve(value), 'image/avif', 0.8);
+  });
+  avifSupport = Boolean(blob && blob.type === 'image/avif');
+  return avifSupport;
 }
 
 export { VIDEO_EXTENSIONS };
