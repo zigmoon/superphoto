@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src=".github/brand-logo.png" alt="SuperPhoto" width="260">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/brand-logo-dark.png">
+  <img src=".github/brand-logo-light.png" alt="SuperPhoto" width="260">
+</picture>
 
 # SuperPhoto
 
@@ -491,18 +494,29 @@ src-tauri/        Rust backend: native file dialogs, image decoding, export
 
 ### Brand assets
 
+One artwork — the visible layer of `super_photo_blanc.svg` — rasterized into
+every size. No background plate anywhere: the file is fully transparent, so the
+mark sits on the app, the favicon, the dock and the taskbar without a square
+behind it.
+
 | File | Usage |
 | --- | --- |
 | `src/assets/brand/app-icon.svg` | the mark inlined by `BrandMark.astro` (top bar, empty state, About, start dialog, drop zone) |
 | `public/favicon.svg` | favicon, transparent, follows `prefers-color-scheme` |
 | `public/favicon-32.png`, `public/apple-touch-icon.png` | PNG fallbacks and iOS icon |
-| `public/brand/mark.svg` | monochrome mark, transparent, `currentColor` |
-| `public/brand/mark-light.svg`, `mark-dark.svg` | black / white marks for `<img>`, e-mail, press |
+| `public/brand/mark.svg` | the official two-tone mark: white plates, ink keylines |
+| `public/brand/mark-white.svg` | same artwork with white keylines — for dark backgrounds |
+| `public/brand/mark-light.svg`, `mark-dark.svg` | aliases of `mark.svg` for `<img>`, e-mail and press use |
+| `.github/brand-logo-light.png` | README header on a light page |
+| `.github/brand-logo-dark.png` | README header on a dark page |
 | `public/brand/app-icon.svg`, `icon-*.png` | PWA and store icons |
 | `public/brand/og-image.png` | 1200 × 630 social card |
 
-The logo is drawn as **real holes** (an SVG mask), never as a plate: it sits on
-any background without a black square behind it.
+The README picks its logo with `<picture>` and `prefers-color-scheme`: GitHub's
+dark theme shows the pure-white version (0 dark pixel, measured), the light
+theme the ink-keyline one. A white logo on a white page would be invisible —
+that is the only reason the pair exists. Both are rendered from the same
+geometry, so the silhouette is identical.
 
 ---
 

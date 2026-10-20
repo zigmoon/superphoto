@@ -85,24 +85,30 @@ function extractVisibleLayer(svg) {
 const layer = extractVisibleLayer(source);
 if (!layer) fail('Aucun calque visible dans super_photo_blanc.svg.');
 
-// Couleurs explicites : plaques blanches, anneaux à l'encre de l'application.
-// Les `<polygon>` n'ont pas de `fill` dans le fichier d'origine (ils héritent) ;
-// les `<path>` non plus (noir par défaut). On écrit donc les deux.
-let artwork = compact(layer.body)
-  .replace(/<polygon\b([^>]*?)\/?>/g, (_, attributes) => {
-    const clean = String(attributes).replace(/\sfill="[^"]*"/g, '');
-    return `<polygon fill="${PLATE}"${clean}/>`;
-  })
-  .replace(/<path\b([^>]*?)\/?>/g, (_, attributes) => {
-    const clean = String(attributes).replace(/\sfill="[^"]*"/g, '');
-    return `<path fill="${INK}"${clean}/>`;
-  })
-  .replace(/\s+\/>/g, '/>');
+// Couleurs explicites. Les `<polygon>` n'ont pas de `fill` dans le fichier
+// d'origine (ils héritent) ; les `<path>` non plus (noir par défaut). On écrit
+// donc les deux, et on choisit la couleur des anneaux : `INK` pour la version
+// bi-ton (fond clair), `PLATE` pour la version blanche (fond sombre), où les
+// anneaux se fondent dans les plaques et donnent une marque pleinement blanche.
+function paint(ringColor) {
+  const markup = compact(layer.body)
+    .replace(/<polygon\b([^>]*?)\/?>/g, (_, attributes) => {
+      const clean = String(attributes).replace(/\sfill="[^"]*"/g, '');
+      return `<polygon fill="${PLATE}"${clean}/>`;
+    })
+    .replace(/<path\b([^>]*?)\/?>/g, (_, attributes) => {
+      const clean = String(attributes).replace(/\sfill="[^"]*"/g, '');
+      return `<path fill="${ringColor}"${clean}/>`;
+    })
+    .replace(/\s+\/>/g, '/>');
 
-// Les tracés Illustrator contiennent des retours à la ligne : on les garde hors
-// des attributs (ils sont déjà compactés) mais on nettoie les `d` pour rester
-// lisibles dans le fichier produit.
-artwork = artwork.replace(/\sd="([^"]*)"/g, (_, d) => ` d="${String(d).replace(/\s+/g, ' ').trim()}"`);
+  // Les tracés Illustrator contiennent des retours à la ligne : on les garde
+  // hors des attributs (ils sont déjà compactés) mais on nettoie les `d` pour
+  // rester lisibles dans le fichier produit.
+  return markup.replace(/\sd="([^"]*)"/g, (_, d) => ` d="${String(d).replace(/\s+/g, ' ').trim()}"`);
+}
+
+const artwork = paint(INK);
 
 /** Réindente un fragment SVG : une balise par ligne, indentation par niveau. */
 function pretty(markup) {
@@ -129,6 +135,7 @@ ${pretty(body)
 }
 
 const document = svgDocument(artwork);
+const documentWhite = svgDocument(paint(PLATE));
 
 const brandDir = path.join(root, 'public', 'brand');
 const assetDir = path.join(root, 'src', 'assets', 'brand');
@@ -148,10 +155,15 @@ for (const target of [
   await writeFile(target, document);
 }
 
+// Variante pleinement blanche : même géométrie, anneaux de la couleur des
+// plaques. Elle ne sert qu'en thème sombre, là où un logo à anneaux noirs
+// disparaîtrait (le README GitHub s'en sert via `<picture>`).
+await writeFile(path.join(brandDir, 'mark-white.svg'), documentWhite);
+
 const plates = (artwork.match(/<polygon\b/g) ?? []).length;
 const rings = (artwork.match(/<path\b/g) ?? []).length;
 
 step(`calque officiel : ${layer.id} — ${plates} plaques, ${rings} anneaux`);
 step(`super_photo_blanc.svg : ${(source.length / 1024).toFixed(0)} Ko → ${(document.length / 1024).toFixed(1)} Ko`);
-step('écrit : public/brand/{app-icon,mark,mark-light,mark-dark}.svg, src/assets/brand/app-icon.svg, public/favicon.svg');
+step('écrit : public/brand/{app-icon,mark,mark-light,mark-dark,mark-white}.svg, src/assets/brand/app-icon.svg, public/favicon.svg');
 step('aucun fond, aucune pastille : les anneaux détourent les plaques blanches');

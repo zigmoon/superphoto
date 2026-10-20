@@ -61,13 +61,21 @@ await sharp(Buffer.from(card), { density: 144 })
   .toFile(path.join(publicDir, 'brand', 'og-image.png'));
 step('public/brand/og-image.png (1200×630)');
 
-// Logo du README : une seule image, l'œuvre officielle se lit sur fond clair
-// comme sur fond sombre (plaques blanches, anneaux sombres).
-await sharp(await readFile(appIcon), { density: 384 })
-  .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-  .png()
-  .toFile(path.join(root, '.github', 'brand-logo.png'));
-step('.github/brand-logo.png');
+// Logo du README GitHub : une paire, choisie par `prefers-color-scheme`.
+//   • fond clair  → l'œuvre bi-ton (plaques blanches, anneaux d'encre) : les
+//     anneaux dessinent la marque, comme dans le fichier d'origine ;
+//   • fond sombre → la variante pleinement blanche, sans aucun pixel sombre,
+//     puisque les anneaux noirs y seraient invisibles.
+for (const [source, target, label] of [
+  ['mark.svg', '.github/brand-logo-light.png', 'fond clair'],
+  ['mark-white.svg', '.github/brand-logo-dark.png', 'fond sombre'],
+]) {
+  await sharp(await readFile(path.join(publicDir, 'brand', source)), { density: 384 })
+    .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png({ compressionLevel: 9 })
+    .toFile(path.join(root, target));
+  step(`${target} (${label})`);
+}
 
 // Icônes du bureau : Tauri dérive toutes les tailles (ico, icns, png) d'un
 // unique 1024 × 1024 rendu depuis le SVG officiel.
