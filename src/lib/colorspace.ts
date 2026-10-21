@@ -16,7 +16,7 @@
  * pixels : l'information perdue ne revient pas, exactement comme dans Photoshop.
  */
 import type { ColorMode, PhotoDoc } from './types';
-import { canvasContext } from './utils';
+import { canvasContext, cloneCanvas, deepClone } from './utils';
 import { t } from './i18n';
 
 /** Limite de couverture totale d'encre, en fraction (≈ 300 %). */
@@ -130,23 +130,60 @@ export function convertCanvasMode(
 
 /**
  * Change le mode du document et convertit tous ses calques.
+ *
+ * La conversion est **réversible** : au premier passage hors RVB, les pixels
+ * d'origine sont mis de côté par calque (`colorSource`). Chaque conversion est
+ * ensuite recalculée depuis cette source, et revenir en RVB la restaure à
+ * l'identique. Deux conséquences voulues :
+ *
+ *   • RVB → N&B → RVB rend les couleurs (le contraire de Photoshop, mais c'est
+ *     ce qu'on attend d'un outil qui n'a pas encore imprimé) ;
+ *   • RVB → CMJN → CMJN → RVB ne cumule aucune perte, puisque la source n'est
+ *     jamais réécrite.
+ *
+ * La source est libérée au retour en RVB : la mémoire revient au niveau de
+ * départ, et un nouveau passage recapture l'état courant.
+ *
  * Les masques sont laissés tels quels : ce sont des canaux alpha.
  */
 export function convertDocumentMode(doc: PhotoDoc, mode: ColorMode): boolean {
   const from = doc.colorMode ?? 'rgb';
   if (from === mode) return false;
+
+  if (mode === 'rgb') {
+    let restored = false;
+    for (const layer of doc.layers) {
+      const source = layer.colorSource;
+      if (!source) continue;
+      layer.canvas = source.canvas;
+      layer.kind = source.kind;
+      layer.text = source.text;
+      layer.path = source.path;
+      layer.shape = source.shape;
+      layer.colorSource = undefined;
+      restored = true;
+    }
+    doc.colorMode = mode;
+    return restored;
+  }
+
   let anyChange = false;
   for (const layer of doc.layers) {
-    const changed = convertCanvasMode(layer.canvas, from, mode);
-    if (changed) anyChange = true;
-    // Un texte ou un tracé doit être réaffiché dans le nouveau mode : on les
-    // rasterise, sinon leurs métadonnées décriraient l'ancienne couleur et le
-    // prochain rendu annulerait la conversion.
-    if (changed && (layer.kind === 'text' || layer.kind === 'path')) {
-      layer.kind = 'raster';
-      layer.text = undefined;
-      layer.path = undefined;
+    // La source n'est capturée qu'une fois : elle décrit l'image RVB de départ.
+    if (!layer.colorSource) {
+      layer.colorSource = {
+        canvas: cloneCanvas(layer.canvas),
+        kind: layer.kind,
+        text: layer.text ? deepClone(layer.text) : undefined,
+        path: layer.path ? deepClone(layer.path) : undefined,
+        shape: layer.shape ? deepClone(layer.shape) : undefined,
+      };
     }
+    // On repart toujours de la source, jamais du résultat précédent.
+    const rendered = cloneCanvas(layer.colorSource.canvas);
+    const changed = convertCanvasMode(rendered, 'rgb', mode);
+    layer.canvas = rendered;
+    if (changed) anyChange = true;
   }
   doc.colorMode = mode;
   return anyChange;

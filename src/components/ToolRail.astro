@@ -118,6 +118,32 @@
     </div>
 
     <div class="tool-group">
+      <div class="section-title" data-i18n="opt.align">Alignment</div>
+      <div class="align-block">
+        <span class="align-label" data-i18n="opt.alignCanvas">Align on the canvas</span>
+        <div class="align-row" role="group" aria-labelledby="align-canvas-label">
+          <button class="align-btn" data-align-object="left" title="Left" data-i18n-title="opt.alignLeftShort" aria-label="Left"><svg viewBox="0 0 24 24"><use href="#i-align-left"></use></svg></button>
+          <button class="align-btn" data-align-object="center" title="Center" data-i18n-title="opt.alignCenterShort" aria-label="Center"><svg viewBox="0 0 24 24"><use href="#i-align-center"></use></svg></button>
+          <button class="align-btn" data-align-object="right" title="Right" data-i18n-title="opt.alignRightShort" aria-label="Right"><svg viewBox="0 0 24 24"><use href="#i-align-right"></use></svg></button>
+          <button class="align-btn" data-align-object="top" title="Top" data-i18n-title="opt.alignTopShort" aria-label="Top"><svg viewBox="0 0 24 24"><use href="#i-align-top"></use></svg></button>
+          <button class="align-btn" data-align-object="middle" title="Middle" data-i18n-title="opt.alignMiddleShort" aria-label="Middle"><svg viewBox="0 0 24 24"><use href="#i-align-middle"></use></svg></button>
+          <button class="align-btn" data-align-object="bottom" title="Bottom" data-i18n-title="opt.alignBottomShort" aria-label="Bottom"><svg viewBox="0 0 24 24"><use href="#i-align-bottom"></use></svg></button>
+        </div>
+      </div>
+      <div class="align-block">
+        <span class="align-label" data-i18n="opt.alignObjects">Align between objects</span>
+        <div class="align-row" role="group">
+          <button class="align-btn" data-align-objects="left" title="Left" data-i18n-title="opt.alignLeftShort" aria-label="Left"><svg viewBox="0 0 24 24"><use href="#i-align-left"></use></svg></button>
+          <button class="align-btn" data-align-objects="center" title="Center" data-i18n-title="opt.alignCenterShort" aria-label="Center"><svg viewBox="0 0 24 24"><use href="#i-align-center"></use></svg></button>
+          <button class="align-btn" data-align-objects="right" title="Right" data-i18n-title="opt.alignRightShort" aria-label="Right"><svg viewBox="0 0 24 24"><use href="#i-align-right"></use></svg></button>
+          <button class="align-btn" data-align-objects="top" title="Top" data-i18n-title="opt.alignTopShort" aria-label="Top"><svg viewBox="0 0 24 24"><use href="#i-align-top"></use></svg></button>
+          <button class="align-btn" data-align-objects="middle" title="Middle" data-i18n-title="opt.alignMiddleShort" aria-label="Middle"><svg viewBox="0 0 24 24"><use href="#i-align-middle"></use></svg></button>
+          <button class="align-btn" data-align-objects="bottom" title="Bottom" data-i18n-title="opt.alignBottomShort" aria-label="Bottom"><svg viewBox="0 0 24 24"><use href="#i-align-bottom"></use></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tool-group">
       <div class="section-title" data-i18n="opt.image">Image</div>
       <div class="wide-tool-list">
         <button class="wide-tool" data-action="image-size" title="Image size" data-i18n-title="resize.imageTitle">
@@ -143,7 +169,7 @@
         </button>
       </div>
       <p class="mode-note" id="color-mode-note" data-i18n="mode.note">
-        Converting to CMYK or grayscale clamps colours. Going back does not restore them.
+        Switching away from RGB previews the print or grayscale rendering. Switching back to RGB restores the colours.
       </p>
     </div>
 

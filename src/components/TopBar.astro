@@ -46,6 +46,12 @@ import BrandMark from './BrandMark.astro';
       <input type="color" id="secondary-color-input" class="native-color" value="#ffffff" tabindex="-1" />
     </div>
 
+    <!-- Palette personnelle : couleurs enregistrées, une par clic. -->
+    <div class="palette" id="color-palette" aria-label="Saved colours" data-i18n-aria="opt.palette">
+      <div class="palette-swatches" id="palette-swatches"></div>
+      <button class="palette-add" id="palette-add" type="button" title="Save the current colour" aria-label="Save the current colour" data-i18n-title="opt.paletteSave" data-i18n-aria="opt.paletteSave">+</button>
+    </div>
+
     <span class="topbar-sep" aria-hidden="true"></span>
     <button class="tb-icon theme-toggle" id="btn-theme-toggle" title="Toggle light / dark" aria-label="Toggle light / dark" data-i18n-title="topbar.themeToggle" data-i18n-aria="topbar.themeToggle">
       <svg class="theme-icon-sun" viewBox="0 0 24 24"><use href="#i-sun"></use></svg>

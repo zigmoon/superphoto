@@ -1,4 +1,4 @@
-import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
+import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, ShapeData, TextData } from './types';
 import { canvasContext, createCanvas } from './utils';
 
 /**
@@ -28,6 +28,7 @@ export interface SessionLayer {
   maskEditing: boolean;
   text?: TextData;
   path?: PathData;
+  shape?: ShapeData;
   image: Blob;
   mask: Blob | null;
 }
@@ -128,6 +129,7 @@ async function serializeDocument(doc: PhotoDoc): Promise<SessionDocument> {
       maskEditing: Boolean(layer.maskEditing),
       text: layer.text ? JSON.parse(JSON.stringify(layer.text)) as TextData : undefined,
       path: layer.path ? JSON.parse(JSON.stringify(layer.path)) as PathData : undefined,
+      shape: layer.shape ? (JSON.parse(JSON.stringify(layer.shape)) as ShapeData) : undefined,
       image: await canvasToBlob(layer.canvas),
       mask: layer.mask ? await canvasToBlob(layer.mask) : null,
     });
@@ -224,6 +226,7 @@ export async function restoreDocument(snapshot: SessionDocument): Promise<PhotoD
       maskEditing: stored.maskEditing,
       text: stored.text,
       path: stored.path,
+      shape: stored.shape,
     };
     if (stored.mask) layer.mask = await blobToCanvas(stored.mask, snapshot.width, snapshot.height);
     layers.push(layer);

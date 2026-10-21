@@ -9,7 +9,7 @@
  * octets sont du JSON, ce qui permet d'identifier un `.sps` même quand le
  * serveur FTP sert le fichier en `application/octet-stream`.
  */
-import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
+import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, ShapeData, TextData } from './types';
 import { base64ToBlob, blobToBase64, canvasContext, canvasToBlob, createCanvas } from './utils';
 
 export const SPS_MIME = 'application/x-superphoto';
@@ -28,6 +28,7 @@ interface SpsLayer {
   maskEditing?: boolean;
   text?: TextData;
   path?: PathData;
+  shape?: ShapeData;
   /** PNG du calque, en base64 (sans préfixe data:). */
   image: string;
   mask?: string | null;
@@ -68,6 +69,7 @@ export async function serializeProject(doc: PhotoDoc): Promise<Blob> {
       maskEditing: layer.maskEditing,
       text: layer.text ? cloneMetadata(layer.text) : undefined,
       path: layer.path ? cloneMetadata(layer.path) : undefined,
+      shape: layer.shape ? cloneMetadata(layer.shape) : undefined,
       image: await blobToBase64(await canvasToBlob(layer.canvas, 'image/png', 1)),
       mask: layer.mask ? await blobToBase64(await canvasToBlob(layer.mask, 'image/png', 1)) : null,
     });
@@ -134,6 +136,7 @@ export async function parseProject(blob: Blob): Promise<PhotoDoc> {
       maskEditing: stored.maskEditing,
       text: stored.text,
       path: stored.path,
+      shape: stored.shape,
     };
     if (stored.mask) layer.mask = await base64ToCanvas(stored.mask, width, height);
     layers.push(layer);

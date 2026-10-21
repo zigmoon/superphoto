@@ -171,7 +171,7 @@ image and adjustment groups to find its settings.
 | **Marquee** (`M`) | Rectangle, ellipse or lasso selection with a **feather** slider (0–120 px). |
 | **Magic wand** (`W`) | Select by color proximity — tolerance, contiguous areas, sample the composite image, with the same feather. |
 | **Crop** (`C`) | Free frame or 1:1, 4:3, 16:9, 3:2, 4:5; confirm with Enter. |
-| **Shapes** (`U`) | Rectangle, ellipse, triangle, star, line — fill, stroke, width, radius. |
+| **Shapes** (`U`) | Rectangle, ellipse, triangle, star, line — fill, stroke, width, radius. The shape stays **editable after it is drawn**: select its layer and the colour fields repaint it live, and the **∅** button removes the fill (outline only) or the stroke (plain fill). |
 | **Pen** (`P`) | Bézier paths with a live rubber band: click for a corner, drag to bend, Shift snaps to 45°, Alt breaks the handles, double-click a point to smooth it, click the first point to close. Enter finishes and keeps the pen, Esc finishes and returns to Select. |
 | **Text** (`T`) | Editable text blocks: content, font, size, weight, color, alignment. |
 | **Pencil** (`N`) | Hard edge, no smoothing. Alt erases. |
@@ -197,6 +197,36 @@ Adjustments preview live on a downscaled copy (fast even on 30 Mpx images) and
 are computed at full resolution when you apply them. The tone tools run through
 a 256-entry lookup table, so levels and curves cost the same as a brightness
 nudge — and the four curve channels are all applied, not only the one on screen.
+
+### Colours: one swatch, one object, one palette
+
+The colour that matters is the **primary swatch** in the top bar:
+
+- Pick a colour there and the **selected object takes it immediately** — shapes,
+  Bézier paths and text blocks are re-rendered from their description, so there is
+  no "apply" step. Pixel layers are left alone: a photo does not change colour
+  because you clicked a swatch.
+- Change a colour in the tool options and the top swatch follows, and so does the
+  next shape you draw.
+- Each colour field has a **∅** button — Photoshop's *None*. Fill only, stroke
+  only, or neither: an empty interior with a visible outline is one click.
+- The **palette** next to the swatches stores up to 12 colours (`localStorage`, so
+  they survive a reload). `+` saves the current colour, a click uses it,
+  <kbd>Alt</kbd>+click deletes it.
+
+### Alignment
+
+The right column has an **Alignment** section with two groups:
+
+| Group | Aligns |
+| --- | --- |
+| **Align on the canvas** | the selected layer's content to the left, centre, right, top, middle or bottom of the document |
+| **Align between objects** | every selected layer to the common bounding box (select two layers or more with Shift) |
+
+Each command moves the *content* of the layers — measured on its real pixels,
+text or path — not the canvas, and lands in the undo history as one step. A
+locked layer is skipped, and a single layer under *Align between objects* tells
+you it needs two.
 
 ### Curves that actually curve
 
@@ -325,8 +355,12 @@ When a document is already open, opening an image asks where it should land:
 
 | Choice | Effect |
 | --- | --- |
-| **In the current workspace** | replaces the document of the active tab (history reset) |
-| **In a new tab** | keeps everything that is already open |
+| **In the current workspace** | **adds the image on a new layer** of the open document, scaled to fit and centred, above the existing layers |
+| **In a new tab** | keeps everything that is already open and opens its own tab |
+
+Nothing is ever replaced, so importing a logo, a texture or a reference photo
+never costs you the work in progress. A PSD imported into the workspace arrives
+as one new layer per PSD layer. The whole import is a single undo step.
 
 Dropping several files at once skips the question and gives each file its own
 tab. `.sps` and `.spp` always open in new tabs.
@@ -339,15 +373,20 @@ chosen in the New dialog and can be changed at any time from
 in the Layers panel and in the export summary.
 
 SuperPhoto works in 8-bit RGB internally — that is what canvas gives without an
-ICC engine. The mode therefore describes the **conversion** applied to the
-pixels, the same way Photoshop's mode conversion works:
+ICC engine. The mode describes the **preview** applied to the pixels:
 
 - **RGB → CMYK** simulates ink: total-area coverage limited to 300 %, dot gain on
   midtones, and a maximum ink density below 1, so saturated colours come out
   duller exactly as they would on paper.
 - **→ B&W** applies Rec. 709 luminance to every layer.
-- Going **back** to RGB does not restore what the narrower gamut clipped — the
-  conversion is one undo step, and undo *does* restore the original pixels.
+- **Switching back to RGB restores the colours.** The first time a document
+  leaves RGB, the original pixels of each layer are kept aside; every conversion
+  is recomputed from that reference, and returning to RGB puts it back
+  bit-for-bit. Toggling RGB ↔ B&W ↔ CMYK therefore never accumulates any loss —
+  unlike Photoshop, where the conversion is final.
+- Painting while in B&W or CMYK frees that reference for the touched layer: your
+  strokes are never overwritten by a restore. The note under the mode switch
+  says so, and the brush paints in greys when the document is B&W.
 
 ### Export
 
@@ -555,7 +594,7 @@ src/
     selection.ts    magic wand (flood fill → polygons)
     mask.ts         layer masks
     adjustments.ts  tonality, contrast, color, levels, curves
-    colorspace.ts   RGB / CMYK / grayscale document modes
+    colorspace.ts   RGB / CMYK / grayscale preview, reversible via a per-layer source
     zip.ts          minimal ZIP reader/writer (no dependency)
     package.ts      .spp package: manifest + document JSON + PNG layers
     project.ts      .sps read/write

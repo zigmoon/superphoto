@@ -104,6 +104,25 @@ export interface Layer {
   maskEditing?: boolean;
   text?: TextData;
   path?: PathData;
+  /** Forme vectorielle conservée : permet de la recolorer après coup. */
+  shape?: ShapeData;
+  /**
+   * Pixels d'origine, capturés au premier passage hors RVB.
+   *
+   * Les conversions CMJN et niveaux de gris écrasent des couleurs. En gardant
+   * la source, revenir en RVB restitue exactement l'image de départ, et
+   * convertir plusieurs fois ne cumule plus les pertes.
+   */
+  colorSource?: ColorSource;
+}
+
+/** Copie de référence prise avant une conversion de mode chromatique. */
+export interface ColorSource {
+  canvas: HTMLCanvasElement;
+  kind: LayerKind;
+  text?: TextData;
+  path?: PathData;
+  shape?: ShapeData;
 }
 
 export interface PhotoDoc {
@@ -139,11 +158,34 @@ export interface HistoryEntry {
 
 export interface ShapeOptions {
   type: 'rectangle' | 'ellipse' | 'triangle' | 'star' | 'line';
-  fill: string;
-  stroke: string;
+  /** Couleur d'aplat, ou `null` pour un contour seul (« sans »). */
+  fill: string | null;
+  /** Couleur de contour, ou `null` pour un aplat seul. */
+  stroke: string | null;
   strokeWidth: number;
   radius: number;
   newLayer: boolean;
+}
+
+/**
+ * Tracé d'une forme conservé sur le calque.
+ *
+ * Une forme est peinte en pixels, mais ses paramètres sont gardés : sans eux,
+ * impossible de changer sa couleur après coup, de la vider ou d'ajuster son
+ * contour — il faudrait repeindre à la main. On peut donc re-rendre le calque
+ * à partir de cette description, exactement comme un texte éditable.
+ */
+export interface ShapeData {
+  type: ShapeOptions['type'];
+  /** Rectangle englobant, en pixels du document. */
+  rect: Rect;
+  /** Coordonnées brutes du geste (utiles pour une ligne). */
+  from: Point;
+  to: Point;
+  fill: string | null;
+  stroke: string | null;
+  strokeWidth: number;
+  radius: number;
 }
 
 export interface GradientOptions {

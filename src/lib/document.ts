@@ -291,6 +291,8 @@ export function resizeDocumentImage(
   const sy = newHeight / doc.height;
   const scale = (sx + sy) / 2;
   for (const layer of doc.layers) {
+    // La géométrie a changé : la source chromatique décrit une autre taille.
+    layer.colorSource = undefined;
     const next = createCanvas(newWidth, newHeight);
     const ctx = canvasContext(next);
     ctx.imageSmoothingEnabled = true;
@@ -339,6 +341,8 @@ export function resizeDocumentCanvas(
   const offsetX = (newWidth - doc.width) * anchorX;
   const offsetY = (newHeight - doc.height) * anchorY;
   for (const layer of doc.layers) {
+    // La géométrie a changé : la source chromatique décrit une autre taille.
+    layer.colorSource = undefined;
     const next = createCanvas(newWidth, newHeight);
     const ctx = canvasContext(next);
     ctx.drawImage(layer.canvas, offsetX, offsetY);
@@ -372,6 +376,8 @@ export function cropDocument(doc: PhotoDoc, rect: Rect): DocGeometrySnapshot {
   const width = Math.max(1, Math.min(Math.round(rect.w), doc.width - x));
   const height = Math.max(1, Math.min(Math.round(rect.h), doc.height - y));
   for (const layer of doc.layers) {
+    // La géométrie a changé : la source chromatique décrit une autre taille.
+    layer.colorSource = undefined;
     const next = createCanvas(width, height);
     const ctx = canvasContext(next);
     ctx.drawImage(layer.canvas, -x, -y);
@@ -416,5 +422,6 @@ export function duplicateLayer(layer: Layer): Layer {
     mask: layer.mask ? cloneMask(layer.mask) : undefined,
     text: layer.text ? deepClone(layer.text) : undefined,
     path: layer.path ? deepClone(layer.path) : undefined,
+    shape: layer.shape ? deepClone(layer.shape) : undefined,
   };
 }

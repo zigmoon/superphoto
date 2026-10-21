@@ -19,7 +19,7 @@
  */
 import { compositeCanvas } from './document';
 import { t } from './i18n';
-import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, TextData } from './types';
+import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, ShapeData, TextData } from './types';
 import { canvasContext, canvasToBlob, createCanvas } from './utils';
 import { createZip, readText, readZip, type ZipEntry } from './zip';
 
@@ -40,6 +40,7 @@ interface PackagedLayer {
   maskEditing?: boolean;
   text?: TextData;
   path?: PathData;
+  shape?: ShapeData;
   /** Chemin du PNG dans l'archive. */
   image: string;
   mask?: string | null;
@@ -173,6 +174,7 @@ export async function serializePackage(
         maskEditing: layer.maskEditing,
         text: layer.text ? (JSON.parse(JSON.stringify(layer.text)) as TextData) : undefined,
         path: layer.path ? (JSON.parse(JSON.stringify(layer.path)) as PathData) : undefined,
+      shape: layer.shape ? (JSON.parse(JSON.stringify(layer.shape)) as ShapeData) : undefined,
         image: imagePath,
         mask: maskPath,
       });
@@ -319,6 +321,7 @@ export async function parsePackage(blob: Blob): Promise<OpenedPackage> {
         maskEditing: stored.maskEditing,
         text: stored.text,
         path: stored.path,
+      shape: stored.shape,
       };
       const maskBytes = stored.mask ? files.get(stored.mask) : null;
       if (maskBytes) layer.mask = await bytesToCanvas(maskBytes, width, height);

@@ -119,6 +119,7 @@ import type {
   Point,
   Rect,
   Selection,
+  ShapeData,
   ShapeOptions,
   TextData,
   ToolId,
@@ -134,6 +135,7 @@ import {
   cloneCanvas,
   createCanvas,
   deepClone,
+  hexToRgb,
   normalizeRect,
   pointInRect,
   pointsBounds,
@@ -149,6 +151,24 @@ import {
 
 /** Poignées de la boîte de transformation, dans le sens horaire. */
 type ScaleHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+/** Palette personnelle : clé de stockage et nombre maximal de couleurs. */
+const SWATCH_KEY = 'superphoto:swatches:v1';
+const SWATCH_LIMIT = 12;
+
+function loadSwatches(): string[] {
+  try {
+    const raw = window.localStorage.getItem(SWATCH_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((value): value is string => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value))
+      .slice(0, SWATCH_LIMIT);
+  } catch {
+    return [];
+  }
+}
 
 const HANDLE_CURSORS: Record<ScaleHandle, string> = {
   nw: 'nwse-resize',
@@ -534,7 +554,7 @@ export class SuperPhotoEditor {
   private shapeOptions: ShapeOptions = {
     type: 'rectangle',
     fill: '#111114',
-    stroke: '#ffffff',
+    stroke: null,
     strokeWidth: 0,
     radius: 16,
     newLayer: true,
@@ -579,6 +599,11 @@ export class SuperPhotoEditor {
   private selectionFeather = 0;
   private spotlight = { diameter: 420, intensity: 55, softness: 60 };
   private canvasMenu: HTMLElement | null = null;
+  private convertingMode = false;
+  private recolorBefore: { kind: 'shape' | 'path' | 'text'; value: ShapeData | PathData | TextData } | null = null;
+  private swatches: string[] = loadSwatches();
+  private fitTimer = 0;
+  private lastFitKey = '';
   private refreshBlendOptions: (() => void) | null = null;
   private stampSource: Point | null = null;
   private patchSourceRect: Rect | null = null;
@@ -664,14 +689,11 @@ export class SuperPhotoEditor {
       () => {
         this.invalidateDisplayRect();
         // En mode « ajuster à la fenêtre », la toile doit suivre la nouvelle
-        // taille : sans ce rappel, redimensionner laissait l'image petite au
-        // milieu d'un stage vide. La mesure est prise à la frame suivante pour
-        // ne pas lire une largeur de vue encore périmée.
-        if (this.fitMode && this.doc) {
-          window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(() => this.fitToView());
-          });
-        }
+        // taille. Le recalcul est délégué à l'observateur de taille de la vue,
+        // qui se déclenche **après** la mise en page : mesurer ici, dans le
+        // gestionnaire `resize`, lisait encore l'ancienne largeur et figeait un
+        // zoom trop petit.
+        this.scheduleFit();
       },
       { passive: true },
     );
@@ -679,7 +701,10 @@ export class SuperPhotoEditor {
     // provoquer d'événement `resize` : sans observateur, le rectangle mémorisé
     // restait périmé et chaque clic tombait quelques pixels à côté.
     if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(() => this.invalidateDisplayRect());
+      const observer = new ResizeObserver(() => {
+        this.invalidateDisplayRect();
+        this.scheduleFit();
+      });
       observer.observe(this.display);
       observer.observe(this.viewport);
     }
@@ -779,6 +804,12 @@ export class SuperPhotoEditor {
     return layer && layer.kind === 'text' && layer.text ? layer : null;
   }
 
+  /** Calque de forme encore éditable (couleurs, contour, géométrie). */
+  private get activeShapeLayer(): Layer | null {
+    const layer = this.activeLayer;
+    return layer && layer.shape ? layer : null;
+  }
+
   private docPoint(event: PointerEvent | MouseEvent): Point {
     if (!this.doc) return { x: 0, y: 0 };
     const rect = this.currentDisplayRect();
@@ -793,9 +824,27 @@ export class SuperPhotoEditor {
   // Boîte de transformation du calque
   // ───────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Un pixel a changé sur un calque.
+   *
+   * Si le document est dans un mode plus étroit que le RVB, les pixels de
+   * départ mis de côté par la conversion ne décrivent plus ce calque : les
+   * restaurer au retour en RVB écraserait le travail qui vient d'être fait. On
+   * les oublie donc — le calque revient en RVB tel qu'il est, sans couleur
+   * retrouvée. C'est le compromis honnête : on ne perd jamais un coup de
+   * pinceau.
+   */
   private invalidateBounds(layerId?: string): void {
-    if (layerId) this.boundsCache.delete(layerId);
-    else this.boundsCache.clear();
+    if (layerId) {
+      this.boundsCache.delete(layerId);
+      if (this.convertingMode) return;
+      const doc = this.doc;
+      if (!doc || (doc.colorMode ?? 'rgb') === 'rgb') return;
+      const layer = doc.layers.find((item) => item.id === layerId);
+      if (layer?.colorSource) layer.colorSource = undefined;
+    } else {
+      this.boundsCache.clear();
+    }
   }
 
   /** Contenu visible du calque : texte et tracé ont une boîte exacte, le reste est scanné. */
@@ -1804,6 +1853,33 @@ export class SuperPhotoEditor {
     this.viewport.scrollLeft = 0;
     this.viewport.scrollTop = 0;
     this.invalidateDisplayRect();
+    this.lastFitKey = this.fitKey();
+  }
+
+  /** Signature de la vue : taille de la zone visible + taille du document. */
+  private fitKey(): string {
+    return `${this.viewport.clientWidth}x${this.viewport.clientHeight}:${this.doc?.width}x${this.doc?.height}`;
+  }
+
+  /**
+   * Recadre la toile en mode « ajuster à la fenêtre », au plus une fois par
+   * tour de boucle.
+   *
+   * Déclenché par `resize` **et** par l'observateur de taille, donc toujours
+   * après la mise en page. On utilise un minuteur plutôt qu'une frame : un
+   * onglet en arrière-plan ne reçoit aucune frame, et le drapeau resterait
+   * armé, bloquant tout recadrage ultérieur. On ne recadre que si la vue a
+   * réellement changé de taille — `applyZoom` redimensionne la toile, ce qui
+   * redéclencherait l'observateur.
+   */
+  private scheduleFit(): void {
+    if (!this.fitMode || !this.doc || this.fitTimer) return;
+    this.fitTimer = window.setTimeout(() => {
+      this.fitTimer = 0;
+      if (!this.fitMode || !this.doc) return;
+      if (this.fitKey() === this.lastFitKey) return;
+      this.fitToView();
+    }, 0);
   }
 
   private zoomAtPoint(factor: number, clientX: number, clientY: number): void {
@@ -2148,6 +2224,164 @@ export class SuperPhotoEditor {
       ctx.drawImage(layer.canvas, (thumb.width - width) / 2, (thumb.height - height) / 2, width, height);
     }
     this.syncLayerProps();
+  }
+
+  /**
+   * Applique la couleur de premier plan à l'objet sélectionné.
+   *
+   * Trois familles sont concernées : les formes (aplat repeint depuis leur
+   * description), les tracés Bézier (aplat ou contour, selon ce qui est actif)
+   * et les textes. Les calques de pixels purs sont laissés tranquilles : une
+   * photo ne change pas de couleur parce qu'on a cliqué sur une pastille.
+   */
+  private recolorActiveObject(color: string): boolean {
+    const layer = this.activeLayer;
+    if (!layer || layer.locked) return false;
+    const capture = (kind: 'shape' | 'path' | 'text'): void => {
+      if (this.recolorBefore) return;
+      const value = kind === 'shape'
+        ? layer.shape && deepClone(layer.shape)
+        : kind === 'path'
+          ? layer.path && deepClone(layer.path)
+          : layer.text && deepClone(layer.text);
+      if (value) this.recolorBefore = { kind, value };
+    };
+    if (layer.shape) {
+      const next: ShapeData = { ...layer.shape, fill: layer.shape.fill ? color : null };
+      if (next.fill === layer.shape.fill) return false;
+      capture('shape');
+      layer.shape = next;
+      this.renderShapeLayer(layer);
+      this.invalidateBounds(layer.id);
+      this.layersDirty = true;
+      this.requestFrame();
+      if (this.activeTool === 'shapes') this.renderToolOptions();
+      return true;
+    }
+    if (layer.kind === 'path' && layer.path) {
+      if (!layer.path.fill) return false;
+      capture('path');
+      layer.path.fill = color;
+      renderLayer(layer);
+      this.invalidateBounds(layer.id);
+      this.layersDirty = true;
+      this.requestFrame();
+      return true;
+    }
+    if (layer.kind === 'text' && layer.text) {
+      capture('text');
+      layer.text.color = color;
+      renderLayer(layer);
+      this.invalidateBounds(layer.id);
+      this.layersDirty = true;
+      this.requestFrame();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Palette personnelle.
+   *
+   * Les couleurs enregistrées survivent au rechargement (`localStorage`), se
+   * posent d'un clic sur la couleur de premier plan et se suppriment avec Alt.
+   * Douze au maximum : au-delà, la bande de la barre du haut deviendrait
+   * illisible et pousserait les outils hors de l'écran.
+   */
+  private bindPalette(): void {
+    const host = document.getElementById('palette-swatches');
+    const add = document.getElementById('palette-add');
+    add?.addEventListener('click', () => {
+      const color = this.primaryColor.toLowerCase();
+      if (this.swatches.includes(color)) {
+        this.renderPalette();
+        return;
+      }
+      if (this.swatches.length >= SWATCH_LIMIT) {
+        this.toast(t('msg.paletteFull', { n: SWATCH_LIMIT }), 'info');
+        return;
+      }
+      this.swatches.push(color);
+      this.saveSwatches();
+      this.renderPalette();
+      this.toast(t('msg.paletteSaved'), 'success');
+    });
+    host?.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>('[data-swatch]');
+      const color = button?.dataset.swatch;
+      if (!color) return;
+      if (event.altKey) {
+        this.swatches = this.swatches.filter((item) => item !== color);
+        this.saveSwatches();
+        this.renderPalette();
+        this.toast(t('msg.paletteRemoved'), 'info');
+        return;
+      }
+      this.primaryColor = color;
+      this.syncColors();
+      this.recolorActiveObject(color);
+      this.renderCanvas();
+      if (this.activeTool === 'shapes' || this.activeTool === 'gradient' || this.activeTool === 'eyedropper') {
+        this.renderToolOptions();
+      }
+    });
+    this.renderPalette();
+  }
+
+  private saveSwatches(): void {
+    try {
+      window.localStorage.setItem(SWATCH_KEY, JSON.stringify(this.swatches));
+    } catch {
+      /* mode privé : la palette reste en mémoire pour la session */
+    }
+  }
+
+  private renderPalette(): void {
+    const host = document.getElementById('palette-swatches');
+    const palette = document.getElementById('color-palette');
+    if (!host) return;
+    host.innerHTML = this.swatches
+      .map(
+        (color) =>
+          `<button class="palette-dot" type="button" data-swatch="${color}" style="--dot:${color}" title="${color}" aria-label="${color}"></button>`,
+      )
+      .join('');
+    if (palette) palette.classList.toggle('is-empty', this.swatches.length === 0);
+  }
+
+  /** Recolore ce qui doit l'être et referme proprement l'entrée d'historique. */
+  private commitRecolor(): void {
+    const layer = this.activeLayer;
+    if (!layer) return;
+    const snapshot = this.recolorBefore;
+    this.recolorBefore = null;
+    if (!snapshot) return;
+    const after = layer.shape ? deepClone(layer.shape) : layer.path ? deepClone(layer.path) : layer.text ? deepClone(layer.text) : null;
+    if (!after) return;
+    const before = snapshot.value;
+    this.history.push({
+      label: t('msg.objectColor'),
+      undo: () => {
+        if (snapshot.kind === 'shape') layer.shape = deepClone(before as ShapeData);
+        else if (snapshot.kind === 'path' && layer.path) layer.path = deepClone(before as PathData);
+        else if (snapshot.kind === 'text' && layer.text) layer.text = deepClone(before as TextData);
+        renderLayer(layer);
+        this.renderShapeLayer(layer);
+        this.invalidateBounds(layer.id);
+        this.layersDirty = true;
+        this.renderAll();
+      },
+      redo: () => {
+        if (snapshot.kind === 'shape') layer.shape = deepClone(after as ShapeData);
+        else if (snapshot.kind === 'path' && layer.path) layer.path = deepClone(after as PathData);
+        else if (snapshot.kind === 'text' && layer.text) layer.text = deepClone(after as TextData);
+        renderLayer(layer);
+        this.renderShapeLayer(layer);
+        this.invalidateBounds(layer.id);
+        this.layersDirty = true;
+        this.renderAll();
+      },
+    });
   }
 
   private syncColors(): void {
@@ -2519,9 +2753,40 @@ export class SuperPhotoEditor {
       <p class="options-hint">${escapeHtml(toolHint('crop'))}</p>`;
   }
 
+  /**
+   * Options du tracé de forme.
+   *
+   * Quand un calque de forme est sélectionné, les champs décrivent **cet
+   * objet** : changer sa couleur le repeint immédiatement. Sinon ils décrivent
+   * la forme à venir. Le bouton « ∅ » de chaque couleur la retire (contour
+   * seul ou aplat seul) — c'est le « sans » de Photoshop.
+   */
   private shapesOptionsHtml(): string {
     const options = this.shapeOptions;
+    const layer = this.activeShapeLayer;
+    const data = layer?.shape ?? null;
+    const type = data?.type ?? options.type;
+    const fill = data ? data.fill : options.fill;
+    const stroke = data ? data.stroke : options.stroke;
+    const strokeWidth = data ? data.strokeWidth : options.strokeWidth;
+    const radius = data ? data.radius : options.radius;
+    const scope = data ? layer?.name ?? '' : '';
+    const swatch = (
+      key: 'fill' | 'stroke',
+      label: string,
+      value: string | null,
+    ): string => `
+        <div class="color-field">
+          <span>${escapeHtml(label)}</span>
+          <div class="color-field-row">
+            <input type="color" data-shape-field="${key}" value="${value ?? '#000000'}" ${value ? '' : 'disabled'}>
+            <button class="color-none ${value ? '' : 'is-active'}" type="button"
+              data-shape-none="${key}" title="${escapeHtml(t('opt.noColor'))}"
+              aria-pressed="${value ? 'false' : 'true'}">∅</button>
+          </div>
+        </div>`;
     return `
+      ${data ? `<p class="options-hint options-scope">${escapeHtml(t('opt.shapeEditing', { name: scope }))}</p>` : ''}
       <label class="field-label">${escapeHtml(t('opt.shapeType'))}
         <select data-shape-field="type">
           ${[
@@ -2531,21 +2796,21 @@ export class SuperPhotoEditor {
             { value: 'star', label: t('opt.star') },
             { value: 'line', label: t('opt.line') },
           ]
-            .map((item) => `<option value="${item.value}" ${options.type === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
+            .map((item) => `<option value="${item.value}" ${type === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
             .join('')}
         </select>
       </label>
       <div class="dual-colors">
-        <label class="color-field"><span>${escapeHtml(t('opt.fillColor'))}</span><input type="color" data-shape-field="fill" value="${options.fill}"></label>
-        <label class="color-field"><span>${escapeHtml(t('opt.strokeColor'))}</span><input type="color" data-shape-field="stroke" value="${options.stroke}"></label>
+        ${swatch('fill', t('opt.fillColor'), fill)}
+        ${swatch('stroke', t('opt.strokeColor'), stroke)}
       </div>
-      <label class="range-field">${escapeHtml(t('opt.strokeWidth'))} <output data-shape-output="strokeWidth">${options.strokeWidth} px</output>
-        <input type="range" min="0" max="40" step="1" data-shape-field="strokeWidth" value="${options.strokeWidth}">
+      <label class="range-field">${escapeHtml(t('opt.strokeWidth'))} <output data-shape-output="strokeWidth">${strokeWidth} px</output>
+        <input type="range" min="0" max="40" step="1" data-shape-field="strokeWidth" value="${strokeWidth}">
       </label>
-      <label class="range-field">${escapeHtml(t('opt.radius'))} <output data-shape-output="radius">${options.radius} px</output>
-        <input type="range" min="0" max="120" step="1" data-shape-field="radius" value="${options.radius}">
+      <label class="range-field">${escapeHtml(t('opt.radius'))} <output data-shape-output="radius">${radius} px</output>
+        <input type="range" min="0" max="120" step="1" data-shape-field="radius" value="${radius}" ${type === 'rectangle' ? '' : 'disabled'}>
       </label>
-      <label class="check-field"><input type="checkbox" data-shape-field="newLayer" ${options.newLayer ? 'checked' : ''}> ${escapeHtml(t('opt.newLayer'))}</label>`;
+      ${data ? '' : `<label class="check-field"><input type="checkbox" data-shape-field="newLayer" ${options.newLayer ? 'checked' : ''}> ${escapeHtml(t('opt.newLayer'))}</label>`}`;
   }
 
   private penOptionsHtml(): string {
@@ -2750,7 +3015,14 @@ export class SuperPhotoEditor {
     byId<HTMLInputElement>('primary-color-input').addEventListener('input', (event) => {
       this.primaryColor = (event.target as HTMLInputElement).value;
       this.syncColors();
+      // La pastille du haut pilote la couleur de l'objet sélectionné : c'est le
+      // geste naturel — on choisit une teinte, l'objet prend cette teinte.
+      const recolored = this.recolorActiveObject(this.primaryColor);
       if (this.activeTool === 'gradient' || this.activeTool === 'eyedropper') this.renderToolOptions();
+      if (recolored) this.renderCanvas();
+    });
+    byId<HTMLInputElement>('primary-color-input').addEventListener('change', () => {
+      this.commitRecolor();
     });
     byId<HTMLInputElement>('secondary-color-input').addEventListener('input', (event) => {
       this.secondaryColor = (event.target as HTMLInputElement).value;
@@ -2766,7 +3038,7 @@ export class SuperPhotoEditor {
     });
 
     byId<HTMLButtonElement>('btn-preferences').addEventListener('click', () => this.openPreferences());
-    byId<HTMLButtonElement>('btn-theme-toggle').addEventListener('click', () => this.toggleTheme());
+    this.bindPalette();    byId<HTMLButtonElement>('btn-theme-toggle').addEventListener('click', () => this.toggleTheme());
 
     byId<HTMLButtonElement>('btn-toggle-left').addEventListener('click', () => {
       const open = this.app.classList.contains('hide-left');
@@ -3534,6 +3806,24 @@ export class SuperPhotoEditor {
         if (tool && tool in TOOLS) this.setTool(tool);
       });
     }
+    // Alignement : deux familles de boutons, la zone de travail ou les objets
+    // entre eux. Disponibles quel que soit l'outil, comme dans SuperPrint.
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-align-object]')) {
+      button.addEventListener('click', () => {
+        this.alignLayers(
+          (button.dataset.alignObject as 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') ?? 'left',
+          'canvas',
+        );
+      });
+    }
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-align-objects]')) {
+      button.addEventListener('click', () => {
+        this.alignLayers(
+          (button.dataset.alignObjects as 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') ?? 'left',
+          'objects',
+        );
+      });
+    }
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-action]')) {
       if (!button.closest('#tool-options')) {
         button.addEventListener('click', () => this.handleAction(button.dataset.action ?? ''));
@@ -3566,7 +3856,11 @@ export class SuperPhotoEditor {
         }
         return;
       }
-      const channel = (event.target as HTMLElement).closest<HTMLElement>('[data-channel]');
+      const shapeNone = (event.target as HTMLElement).closest<HTMLElement>('[data-shape-none]');
+      if (shapeNone) {
+        this.onShapeNone(shapeNone.dataset.shapeNone === 'stroke' ? 'stroke' : 'fill');
+        return;
+      }      const channel = (event.target as HTMLElement).closest<HTMLElement>('[data-channel]');
       if (channel) {
         this.curveChannel = (channel.dataset.channel as CurveChannel) ?? 'rgb';
         this.renderToolOptions();
@@ -3758,12 +4052,78 @@ export class SuperPhotoEditor {
     this.requestFrame();
   }
 
+  /**
+   * Champ du panneau Formes.
+   *
+   * Si un calque de forme est sélectionné, le changement s'applique à **cet
+   * objet** (repeint immédiatement, avec une entrée d'historique) ; sinon il
+   * change les réglages de la prochaine forme. Les couleurs restent
+   * synchronisées avec la pastille de la barre du haut.
+   */
   private onShapeFieldInput(
     target: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
     commit = false,
   ): void {
     const key = target.dataset.shapeField;
     if (!key) return;
+    const layer = this.activeShapeLayer;
+    const data = layer?.shape ?? null;
+
+    if (data && layer) {
+      const before = deepClone(data);
+      const next = deepClone(data);
+      if (key === 'type') next.type = target.value as ShapeData['type'];
+      else if (key === 'fill') next.fill = target.value;
+      else if (key === 'stroke') next.stroke = target.value;
+      else if (key === 'strokeWidth') next.strokeWidth = Number(target.value);
+      else if (key === 'radius') next.radius = Number(target.value);
+      else return;
+      layer.shape = next;
+      this.renderShapeLayer(layer);
+      // La couleur choisie devient la couleur de premier plan : le prochain
+      // objet naîtra de la même teinte.
+      if (key === 'fill' && next.fill) {
+        this.primaryColor = next.fill;
+        this.syncColors();
+      }
+      if (key === 'strokeWidth') {
+        const output = this.toolOptions.querySelector('[data-shape-output="strokeWidth"]');
+        if (output) output.textContent = `${next.strokeWidth} px`;
+      }
+      if (key === 'radius') {
+        const output = this.toolOptions.querySelector('[data-shape-output="radius"]');
+        if (output) output.textContent = `${next.radius} px`;
+      }
+      // L'historique est écrit au relâchement : pas une entrée par pixel de
+      // curseur, mais un seul pas d'annulation par réglage.
+      if (commit) {
+        this.history.push({
+          label: t('msg.shapeStyle'),
+          undo: () => {
+            layer.shape = deepClone(before);
+            this.renderShapeLayer(layer);
+            this.invalidateBounds(layer.id);
+            this.layersDirty = true;
+            this.renderAll();
+            this.renderToolOptions();
+          },
+          redo: () => {
+            layer.shape = deepClone(next);
+            this.renderShapeLayer(layer);
+            this.invalidateBounds(layer.id);
+            this.layersDirty = true;
+            this.renderAll();
+            this.renderToolOptions();
+          },
+        });
+      }
+      this.invalidateBounds(layer.id);
+      this.layersDirty = true;
+      this.requestFrame();
+      if (commit) this.renderToolOptions();
+      return;
+    }
+
     if (key === 'type') this.shapeOptions.type = target.value as ShapeOptions['type'];
     else if (key === 'fill') this.shapeOptions.fill = target.value;
     else if (key === 'stroke') this.shapeOptions.stroke = target.value;
@@ -3779,6 +4139,46 @@ export class SuperPhotoEditor {
       this.shapeOptions.newLayer = (target as HTMLInputElement).checked;
     }
     if (commit && key === 'type') this.renderToolOptions();
+  }
+
+  /** Bouton « ∅ » : retire la couleur (contour seul ou aplat seul). */
+  private onShapeNone(key: 'fill' | 'stroke'): void {
+    const layer = this.activeShapeLayer;
+    const data = layer?.shape ?? null;
+    if (data && layer) {
+      const before = deepClone(data);
+      const next = deepClone(data);
+      const current = next[key];
+      next[key] = current ? null : this.primaryColor;
+      layer.shape = next;
+      this.renderShapeLayer(layer);
+      this.history.push({
+        label: t('msg.shapeStyle'),
+        undo: () => {
+          layer.shape = deepClone(before);
+          this.renderShapeLayer(layer);
+          this.invalidateBounds(layer.id);
+          this.layersDirty = true;
+          this.renderAll();
+          this.renderToolOptions();
+        },
+        redo: () => {
+          layer.shape = deepClone(next);
+          this.renderShapeLayer(layer);
+          this.invalidateBounds(layer.id);
+          this.layersDirty = true;
+          this.renderAll();
+          this.renderToolOptions();
+        },
+      });
+      this.invalidateBounds(layer.id);
+      this.layersDirty = true;
+      this.renderAll();
+      this.renderToolOptions();
+      return;
+    }
+    this.shapeOptions[key] = this.shapeOptions[key] ? null : this.primaryColor;
+    this.renderToolOptions();
   }
 
   private onGradientFieldInput(
@@ -4668,6 +5068,142 @@ export class SuperPhotoEditor {
       },
     });
     this.renderAll();
+  }
+
+  /**
+   * Alignement des objets.
+   *
+   * Un « objet » ici, c'est le contenu visible d'un calque : sa boîte réelle
+   * (pixels, texte ou tracé), pas la toile entière — les calques occupent tous
+   * un canvas à la taille du document, donc aligner les canvas ne déplacerait
+   * rien. On translate le contenu, et les métadonnées avec lui pour que la
+   * boîte de transformation suive.
+   *
+   * `reference` vaut `canvas` pour coller les objets aux bords de la zone de
+   * travail, `objects` pour les aligner les uns sur les autres (il en faut
+   * alors au moins deux).
+   */
+  private alignLayers(
+    edge: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom',
+    reference: 'canvas' | 'objects',
+  ): void {
+    const doc = this.doc;
+    if (!doc) return;
+    const layers = this.selectedLayers().filter((layer) => !layer.locked);
+    const active = this.activeLayer;
+    const scope = layers.length > 0 ? layers : active ? [active] : [];
+    if (scope.length === 0) return;
+
+    const entries = scope
+      .map((layer) => ({ layer, bounds: this.layerBounds(layer) }))
+      .filter((entry): entry is { layer: Layer; bounds: Rect } => Boolean(entry.bounds));
+    if (entries.length === 0) {
+      this.toast(t('msg.nothingToAlign'), 'info');
+      return;
+    }
+
+    let referenceRect: Rect;
+    if (reference === 'objects') {
+      if (entries.length < 2) {
+        this.toast(t('msg.alignedNeedTwo'), 'info');
+        return;
+      }
+      const left = Math.min(...entries.map((entry) => entry.bounds.x));
+      const top = Math.min(...entries.map((entry) => entry.bounds.y));
+      const right = Math.max(...entries.map((entry) => entry.bounds.x + entry.bounds.w));
+      const bottom = Math.max(...entries.map((entry) => entry.bounds.y + entry.bounds.h));
+      referenceRect = { x: left, y: top, w: right - left, h: bottom - top };
+    } else {
+      referenceRect = { x: 0, y: 0, w: doc.width, h: doc.height };
+    }
+
+    const deltas = entries.map(({ layer, bounds }) => {
+      let dx = 0;
+      let dy = 0;
+      if (edge === 'left') dx = referenceRect.x - bounds.x;
+      else if (edge === 'right') dx = referenceRect.x + referenceRect.w - (bounds.x + bounds.w);
+      else if (edge === 'center') dx = referenceRect.x + referenceRect.w / 2 - (bounds.x + bounds.w / 2);
+      else if (edge === 'top') dy = referenceRect.y - bounds.y;
+      else if (edge === 'bottom') dy = referenceRect.y + referenceRect.h - (bounds.y + bounds.h);
+      else dy = referenceRect.y + referenceRect.h / 2 - (bounds.y + bounds.h / 2);
+      return { layer, dx: Math.round(dx), dy: Math.round(dy) };
+    });
+    if (deltas.every((item) => item.dx === 0 && item.dy === 0)) return;
+
+    // Instantané : un décalage qui pousse du contenu hors de la toile est
+    // irréversible autrement.
+    const before = deltas.map(({ layer }) => ({
+      layer,
+      canvas: cloneCanvas(layer.canvas),
+      text: layer.text ? deepClone(layer.text) : undefined,
+      path: layer.path ? deepClone(layer.path) : undefined,
+      shape: layer.shape ? deepClone(layer.shape) : undefined,
+    }));
+    for (const { layer, dx, dy } of deltas) this.shiftLayerContent(layer, dx, dy);
+    const after = deltas.map(({ layer }) => ({
+      layer,
+      canvas: cloneCanvas(layer.canvas),
+      text: layer.text ? deepClone(layer.text) : undefined,
+      path: layer.path ? deepClone(layer.path) : undefined,
+      shape: layer.shape ? deepClone(layer.shape) : undefined,
+    }));
+    const restore = (
+      state: Array<{
+        layer: Layer;
+        canvas: HTMLCanvasElement;
+        text?: TextData;
+        path?: PathData;
+        shape?: ShapeData;
+      }>,
+    ): void => {
+      for (const entry of state) {
+        entry.layer.canvas = entry.canvas;
+        entry.layer.text = entry.text;
+        entry.layer.path = entry.path;
+        entry.layer.shape = entry.shape;
+      }
+      this.invalidateBounds();
+      this.layersDirty = true;
+      this.renderAll();
+    };
+    const label = t('msg.aligned', { edge: t(`opt.align${edge === 'middle' ? 'Middle' : edge[0]!.toUpperCase() + edge.slice(1)}`) });
+    this.history.push({
+      label,
+      undo: () => restore(before),
+      redo: () => restore(after),
+    });
+    this.invalidateBounds();
+    this.layersDirty = true;
+    this.renderAll();
+    this.setMessage(label);
+  }
+
+  /** Décale le contenu d'un calque (pixels + métadonnées) dans son canvas. */
+  private shiftLayerContent(layer: Layer, dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    const source = cloneCanvas(layer.canvas);
+    const ctx = canvasContext(layer.canvas);
+    ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    ctx.drawImage(source, dx, dy);
+    if (layer.text) {
+      layer.text.x += dx;
+      layer.text.y += dy;
+      layer.text.bounds = layer.text.bounds
+        ? { ...layer.text.bounds, x: layer.text.bounds.x + dx, y: layer.text.bounds.y + dy }
+        : undefined;
+    }
+    if (layer.path) {
+      for (const anchor of layer.path.anchors) {
+        anchor.x += dx;
+        anchor.y += dy;
+      }
+    }
+    if (layer.shape) {
+      const shape = layer.shape;
+      shape.rect = { ...shape.rect, x: shape.rect.x + dx, y: shape.rect.y + dy };
+      shape.from = { x: shape.from.x + dx, y: shape.from.y + dy };
+      shape.to = { x: shape.to.x + dx, y: shape.to.y + dy };
+    }
   }
 
   /** Renomme la ligne visée : le champ de propriétés prend le focus. */
@@ -6315,47 +6851,38 @@ export class SuperPhotoEditor {
       this.cancelAdjustment();
       this.renderToolOptions();
     }
-    // Instantané complet : la conversion écrase des couleurs, l'annulation doit
-    // rendre les pixels d'origine, pas seulement le drapeau du mode.
-    const snapshot = doc.layers.map((layer) => ({
-      layer,
-      canvas: cloneCanvas(layer.canvas),
-      kind: layer.kind,
-      text: layer.text ? deepClone(layer.text) : undefined,
-      path: layer.path ? deepClone(layer.path) : undefined,
-    }));
-    const changed = convertDocumentMode(doc, mode);
+    // La conversion est réversible : les pixels de départ sont conservés par
+    // calque, donc l'annulation n'a plus besoin d'un instantané complet — on
+    // rejoue simplement la conversion dans l'autre sens.
+    const apply = (target: ColorMode): boolean => {
+      this.convertingMode = true;
+      try {
+        return convertDocumentMode(doc, target);
+      } finally {
+        this.convertingMode = false;
+      }
+    };
+    const changed = apply(mode);
     const label = t('mode.convertLabel', { from: colorModeShort(from), to: colorModeShort(mode) });
+    const refresh = (): void => {
+      this.invalidateBounds();
+      this.layersDirty = true;
+      this.renderAll();
+      this.renderToolOptions();
+      this.syncChrome();
+    };
     this.history.push({
       label,
       undo: () => {
-        for (const entry of snapshot) {
-          entry.layer.canvas = entry.canvas;
-          entry.layer.kind = entry.kind;
-          entry.layer.text = entry.text;
-          entry.layer.path = entry.path;
-        }
-        doc.colorMode = from;
-        this.invalidateBounds();
-        this.layersDirty = true;
-        this.renderAll();
-        this.renderToolOptions();
-        this.syncChrome();
+        apply(from);
+        refresh();
       },
       redo: () => {
-        convertDocumentMode(doc, mode);
-        this.invalidateBounds();
-        this.layersDirty = true;
-        this.renderAll();
-        this.renderToolOptions();
-        this.syncChrome();
+        apply(mode);
+        refresh();
       },
     });
-    this.invalidateBounds();
-    this.layersDirty = true;
-    this.renderAll();
-    this.renderToolOptions();
-    this.syncChrome();
+    refresh();
     this.setMessage(changed ? t('mode.converted', { mode: colorModeShort(mode) }) : t('mode.samePixels'));
   }
 
@@ -6367,8 +6894,12 @@ export class SuperPhotoEditor {
     }
     const note = document.getElementById('color-mode-note');
     if (note) {
+      const key = !this.doc ? 'mode.note' : mode === 'rgb' ? 'mode.note' : 'mode.noteActive';
+      note.dataset.i18n = key;
       note.textContent = this.doc
-        ? t('mode.noteActive', { mode: colorModeShort(mode) })
+        ? key === 'mode.noteActive'
+          ? t('mode.noteActive', { mode: colorModeShort(mode) })
+          : t('mode.note')
         : t('mode.note');
     }
   }
@@ -7380,6 +7911,13 @@ export class SuperPhotoEditor {
         ? { composite: 'source-over', color: '#ffffff' }
         : { composite: 'destination-out', color: '#000000' };
     }
+    // Dans un document en niveaux de gris, peindre en couleur serait un
+    // mensonge : le pinceau prend la luminance de la teinte choisie.
+    if (this.doc?.colorMode === 'gray') {
+      const { r, g, b } = hexToRgb(this.primaryColor);
+      const level = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+      return { composite: 'source-over', color: rgbToHex(level, level, level) };
+    }
     return { composite: 'source-over', color: this.primaryColor };
   }
 
@@ -7788,7 +8326,21 @@ export class SuperPhotoEditor {
     if (isLine && Math.hypot(drag.current.x - drag.start.x, drag.current.y - drag.start.y) < 3) return;
     const options = this.shapeOptions;
     const label = t(options.type === 'rectangle' ? 'opt.rect' : `opt.${options.type}`);
+    const shapeData: ShapeData = {
+      type: options.type,
+      rect,
+      from: { ...drag.start },
+      to: { ...drag.current },
+      fill: options.fill,
+      stroke: options.stroke,
+      strokeWidth: options.strokeWidth,
+      radius: options.radius,
+    };
     const active = this.activeLayer;
+    // Une forme « éditable » garde sa description : on peut donc la recolorer
+    // ensuite. On ne le fait que si le calque ne contient qu'elle — sinon la
+    // description ne couvrirait pas les pixels déjà présents.
+    const reuseShapeLayer = Boolean(active?.shape) && !options.newLayer;
     const useNewLayer =
       options.newLayer ||
       !active ||
@@ -7797,6 +8349,7 @@ export class SuperPhotoEditor {
     let target: Layer;
     let previousActive = doc.activeLayerId;
     let beforeCanvas: HTMLCanvasElement | null = null;
+    let beforeShape: ShapeData | undefined;
     if (useNewLayer) {
       target = createLayer(label, doc.width, doc.height, 'shape');
       const index = doc.layers.findIndex((layer) => layer.id === doc.activeLayerId);
@@ -7806,15 +8359,27 @@ export class SuperPhotoEditor {
     } else {
       target = active;
       beforeCanvas = cloneCanvas(target.canvas);
+      beforeShape = target.shape ? deepClone(target.shape) : undefined;
     }
     const ctx = canvasContext(target.canvas);
     const featherMask = this.getSelectionMask();
     const featherBase = beforeCanvas ?? createCanvas(target.canvas.width, target.canvas.height);
+    // Un calque de forme réutilisé est d'abord effacé : la nouvelle forme
+    // remplace l'ancienne au lieu de s'empiler dessus.
+    if (reuseShapeLayer && !featherMask) {
+      ctx.clearRect(0, 0, target.canvas.width, target.canvas.height);
+    }
     ctx.save();
     if (!featherMask) this.applySelectionClip(ctx);
     this.drawShape(ctx, drag.start, drag.current);
     ctx.restore();
     if (featherMask) this.composeFeathered(featherBase, target.canvas);
+    // La description n'est conservée que si le calque ne porte que cette forme.
+    if (useNewLayer || reuseShapeLayer) {
+      target.shape = shapeData;
+    } else {
+      target.shape = undefined;
+    }
     if (useNewLayer) {
       const insertAt = doc.layers.findIndex((layer) => layer.id === target.id);
       this.history.push({
@@ -7834,18 +8399,21 @@ export class SuperPhotoEditor {
     } else if (beforeCanvas) {
       const before = beforeCanvas;
       const after = cloneCanvas(target.canvas);
+      const afterShape = target.shape ? deepClone(target.shape) : undefined;
       this.history.push({
         label: t('msg.drawShape'),
         undo: () => {
           const context = canvasContext(target.canvas);
           context.clearRect(0, 0, target.canvas.width, target.canvas.height);
           context.drawImage(before, 0, 0);
+          target.shape = beforeShape;
           this.renderAll();
         },
         redo: () => {
           const context = canvasContext(target.canvas);
           context.clearRect(0, 0, target.canvas.width, target.canvas.height);
           context.drawImage(after, 0, 0);
+          target.shape = afterShape;
           this.renderAll();
         },
       });
@@ -8023,20 +8591,21 @@ export class SuperPhotoEditor {
     this.setMessage(`Point lumineux · ${Math.round(radius * 2)} px · ${Math.round(intensity)} %`);
   }
 
-  private drawShape(ctx: CanvasRenderingContext2D, start: Point, current: Point): void {
-    const options = this.shapeOptions;
-    const rect = normalizeRect(start, current);
+  /** Peint une forme décrite par ses données (aperçu, création, re-rendu). */
+  private drawShapeData(ctx: CanvasRenderingContext2D, data: ShapeData): void {
+    const { rect, type, fill, stroke, strokeWidth, radius } = data;
     ctx.beginPath();
-    if (options.type === 'line') {
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(current.x, current.y);
-      ctx.strokeStyle = options.stroke;
-      ctx.lineWidth = Math.max(1, options.strokeWidth);
+    if (type === 'line') {
+      if (!stroke || strokeWidth <= 0) return;
+      ctx.moveTo(data.from.x, data.from.y);
+      ctx.lineTo(data.to.x, data.to.y);
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = Math.max(1, strokeWidth);
       ctx.lineCap = 'round';
       ctx.stroke();
       return;
     }
-    if (options.type === 'ellipse') {
+    if (type === 'ellipse') {
       ctx.ellipse(
         rect.x + rect.w / 2,
         rect.y + rect.h / 2,
@@ -8046,12 +8615,12 @@ export class SuperPhotoEditor {
         0,
         Math.PI * 2,
       );
-    } else if (options.type === 'triangle') {
+    } else if (type === 'triangle') {
       ctx.moveTo(rect.x + rect.w / 2, rect.y);
       ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
       ctx.lineTo(rect.x, rect.y + rect.h);
       ctx.closePath();
-    } else if (options.type === 'star') {
+    } else if (type === 'star') {
       const points = this.starPoints(rect);
       const first = points[0];
       if (first) ctx.moveTo(first.x, first.y);
@@ -8061,19 +8630,40 @@ export class SuperPhotoEditor {
       }
       ctx.closePath();
     } else {
-      const radius = Math.min(options.radius, rect.w / 2, rect.h / 2);
-      this.roundedRect(ctx, rect.x, rect.y, rect.w, rect.h, radius);
+      this.roundedRect(ctx, rect.x, rect.y, rect.w, rect.h, Math.min(radius, rect.w / 2, rect.h / 2));
     }
-    if (options.fill) {
-      ctx.fillStyle = options.fill;
+    if (fill) {
+      ctx.fillStyle = fill;
       ctx.fill();
     }
-    if (options.strokeWidth > 0 && options.stroke) {
-      ctx.strokeStyle = options.stroke;
-      ctx.lineWidth = options.strokeWidth;
+    if (stroke && strokeWidth > 0) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = strokeWidth;
       ctx.lineJoin = 'round';
       ctx.stroke();
     }
+  }
+
+  /** Repeint un calque de forme à partir de ses métadonnées. */
+  private renderShapeLayer(layer: Layer): void {
+    if (!layer.shape) return;
+    const ctx = canvasContext(layer.canvas);
+    ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    this.drawShapeData(ctx, layer.shape);
+  }
+
+  private drawShape(ctx: CanvasRenderingContext2D, start: Point, current: Point): void {
+    const options = this.shapeOptions;
+    this.drawShapeData(ctx, {
+      type: options.type,
+      rect: normalizeRect(start, current),
+      from: start,
+      to: current,
+      fill: options.fill,
+      stroke: options.stroke,
+      strokeWidth: options.strokeWidth,
+      radius: options.radius,
+    });
   }
 
   private roundedRect(
@@ -9546,8 +10136,13 @@ export class SuperPhotoEditor {
       }
       const doc = await parsePsd(blob);
       this.closeNewDocumentDialog();
-      if (psdTarget === 'current' && this.tab) this.replaceActiveTabDocument(doc);
-      else this.openTab(doc);
+      if (psdTarget === 'current' && this.tab) {
+        // Même règle que pour une image : un PSD importé « dans le plan de
+        // travail » arrive sur de nouveaux calques, sans rien remplacer.
+        this.placeDocumentAsLayers(doc, name);
+      } else {
+        this.openTab(doc);
+      }
       this.toast(t('msg.psdOpened', { name: doc.name, n: doc.layers.length }), 'success');
       return;
     }
@@ -9703,50 +10298,89 @@ export class SuperPhotoEditor {
         layers: [layer],
         activeLayerId: layer.id,
       };
-      if (target === 'current' && this.tab) this.replaceActiveTabDocument(doc);
-      else this.openTab(doc);
+      if (target === 'current') {
+        // « Dans le plan de travail » : l'image arrive **sur un nouveau
+        // calque** du document ouvert, à sa place au centre. Elle ne remplace
+        // plus le document — on importe un élément, on ne jette pas le travail.
+        this.placeDocumentAsLayers(doc, name);
+      } else {
+        this.openTab(doc);
+      }
       this.closeNewDocumentDialog();
-      this.toast(t('msg.opened', { name: doc.name, w: width, h: height }), 'success');
     } finally {
       media.release();
     }
   }
 
   /**
-   * Remplace le document de l'onglet actif sans toucher au reste de la session :
-   * c'est le choix « dans le plan de travail » à l'ouverture d'un média.
+   * Ajoute les calques d'un document importé au document courant.
+   *
+   * L'élément est mis à l'échelle pour tenir dans la zone de travail (jamais
+   * agrandi au-delà de sa taille réelle) puis centré. Tout passe par une seule
+   * entrée d'historique : « Ouvrir dans le plan de travail » s'annule d'un coup.
    */
-  private replaceActiveTabDocument(doc: PhotoDoc): void {
-    const tab = this.tab;
-    if (!tab) {
-      this.openTab(doc);
+  private placeDocumentAsLayers(source: PhotoDoc, name: string): void {
+    const doc = this.doc;
+    if (!doc) {
+      this.openTab(source);
       return;
     }
-    this.cancelAdjustment();
-    this.drag = null;
-    this.pendingCrop = null;
-    this.patchSourceRect = null;
-    this.stampSource = null;
-    this.pointerInside = false;
-    this.adjustment = null;
-    this.textEditBefore.clear();
-    this.selectedLayerIds = new Set([doc.activeLayerId]);
-    this.nudge = null;
-    tab.doc = doc;
-    tab.history = new History(() => {
-      if (this.activeTabId === tab.id) this.syncChrome();
+    if (this.adjustment) this.cancelAdjustment();
+    const fit = Math.min(
+      1,
+      doc.width / source.width,
+      doc.height / source.height,
+    );
+    const drawWidth = Math.max(1, Math.round(source.width * fit));
+    const drawHeight = Math.max(1, Math.round(source.height * fit));
+    const offsetX = Math.round((doc.width - drawWidth) / 2);
+    const offsetY = Math.round((doc.height - drawHeight) / 2);
+
+    const created: Layer[] = [];
+    for (const item of source.layers) {
+      const layer = createLayer(
+        source.layers.length > 1 ? item.name : stripExtension(name) || 'Image',
+        doc.width,
+        doc.height,
+        'raster',
+      );
+      const ctx = canvasContext(layer.canvas);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = SMOOTHING_QUALITY[this.preferences.quality];
+      ctx.globalAlpha = item.opacity;
+      ctx.drawImage(item.canvas, offsetX, offsetY, drawWidth, drawHeight);
+      ctx.globalAlpha = 1;
+      layer.opacity = item.opacity;
+      layer.blend = item.blend;
+      layer.visible = item.visible;
+      created.push(layer);
+    }
+    if (created.length === 0) return;
+
+    const before = doc.layers.slice();
+    const beforeActive = doc.activeLayerId;
+    const after = [...doc.layers, ...created];
+    const activeId = created[created.length - 1]?.id ?? beforeActive;
+    const apply = (layers: Layer[], active: string): void => {
+      doc.layers = layers.slice();
+      doc.activeLayerId = active;
+      this.selectedLayerIds = new Set([active]);
+      this.invalidateBounds();
+      this.layersDirty = true;
+      this.renderAll();
+      this.renderToolOptions();
+    };
+    apply(after, activeId);
+    this.history.push({
+      label: t('msg.placeLayerLabel', { name: stripExtension(name) || 'Image' }),
+      undo: () => apply(before, beforeActive),
+      redo: () => apply(after, activeId),
     });
-    tab.selection = null;
-    tab.maskCache = null;
-    tab.coverageCache = null;
-    tab.scroll = null;
-    tab.fitMode = true;
-    tab.zoom = 1;
-    this.statusCache.clear();
-    // `activateTab` remet la toile à la bonne taille, recalcule le zoom et
-    // redessine : rien à dupliquer ici. Les lignes de calques de l'ancien
-    // document sont retirées par `renderLayers` (identifiants disparus).
-    this.activateTab(tab.id, { skipSave: true });
+    this.toast(
+      t('msg.placedLayer', { name: stripExtension(name) || 'Image' }),
+      'success',
+    );
+    if (this.fitMode) this.fitToView();
   }
 
   private undo(): void {
