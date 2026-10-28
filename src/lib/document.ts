@@ -206,6 +206,79 @@ function renderContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return ctx;
 }
 
+/** Canvas de travail réutilisé pour les groupes écrêtés : pas d'allocation par frame. */
+let clipScratch: HTMLCanvasElement | null = null;
+
+function clipCanvas(width: number, height: number): HTMLCanvasElement {
+  if (!clipScratch) clipScratch = createCanvas(width, height);
+  if (clipScratch.width !== width) clipScratch.width = width;
+  if (clipScratch.height !== height) clipScratch.height = height;
+  return clipScratch;
+}
+
+function paintLayer(ctx: CanvasRenderingContext2D, layer: Layer): void {
+  ctx.save();
+  ctx.globalAlpha = layer.opacity;
+  ctx.globalCompositeOperation = layer.blend;
+  drawMaskedLayer(ctx, layer, 0, 0);
+  ctx.restore();
+}
+
+/**
+ * Compose une pile de calques, du bas vers le haut, en respectant les masques
+ * d'écretage.
+ *
+ * Un groupe écrêté, c'est le calque de base plus tous les calques marqués
+ * `clipToBelow` posés au-dessus de lui. On compose le groupe dans une toile de
+ * travail, on le découpe avec l'alpha de la base (`destination-in`), puis on
+ * pose le résultat sur le fond avec le mode de fusion et l'opacité de la base —
+ * exactement la mécanique de Photoshop.
+ */
+export function compositeLayers(
+  ctx: CanvasRenderingContext2D,
+  layers: Layer[],
+  width: number,
+  height: number,
+): void {
+  let index = 0;
+  while (index < layers.length) {
+    const base = layers[index];
+    if (!base) break;
+    let end = index + 1;
+    while (end < layers.length && layers[end]?.clipToBelow) end += 1;
+    const clipped = layers.slice(index + 1, end);
+    index = end;
+
+    if (clipped.length === 0) {
+      if (base.visible) paintLayer(ctx, base);
+      continue;
+    }
+    // Un groupe n'existe que par sa base : base masquée = groupe entier masqué.
+    if (!base.visible) continue;
+
+    const group = clipCanvas(width, height);
+    const groupCtx = renderContext(group);
+    groupCtx.setTransform(1, 0, 0, 1, 0, 0);
+    groupCtx.globalAlpha = 1;
+    groupCtx.globalCompositeOperation = 'source-over';
+    groupCtx.clearRect(0, 0, width, height);
+    paintLayer(groupCtx, base);
+    for (const layer of clipped) {
+      if (layer.visible) paintLayer(groupCtx, layer);
+    }
+    groupCtx.globalAlpha = 1;
+    groupCtx.globalCompositeOperation = 'destination-in';
+    drawMaskedLayer(groupCtx, base, 0, 0);
+    groupCtx.globalCompositeOperation = 'source-over';
+
+    ctx.save();
+    ctx.globalAlpha = base.opacity;
+    ctx.globalCompositeOperation = base.blend;
+    ctx.drawImage(group, 0, 0);
+    ctx.restore();
+  }
+}
+
 export function renderDocument(
   doc: PhotoDoc,
   target: HTMLCanvasElement,
@@ -222,14 +295,7 @@ export function renderDocument(
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, target.width, target.height);
   }
-  for (const layer of doc.layers) {
-    if (!layer.visible) continue;
-    ctx.save();
-    ctx.globalAlpha = layer.opacity;
-    ctx.globalCompositeOperation = layer.blend;
-    drawMaskedLayer(ctx, layer, 0, 0);
-    ctx.restore();
-  }
+  compositeLayers(ctx, doc.layers, target.width, target.height);
 }
 
 export function compositeCanvas(doc: PhotoDoc, background?: string | null): HTMLCanvasElement {

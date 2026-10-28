@@ -29,6 +29,49 @@ function stampBuffer(size: number): HTMLCanvasElement {
   return buffer;
 }
 
+/**
+ * Tampon d'encre pré-rendu.
+ *
+ * Un dégradé radial était recréé à chaque tampon — soit plusieurs dizaines de
+ * fois par trait. On le dessine une fois dans un petit canvas, puis chaque
+ * tampon n'est plus qu'un `drawImage` : même rendu, coût divisé.
+ */
+let stamp: HTMLCanvasElement | null = null;
+let stampKey = '';
+
+function stampFor(radius: number, hardness: number, color: string): HTMLCanvasElement {
+  const size = Math.max(2, Math.ceil(radius * 2) + 2);
+  const key = `${size}|${radius.toFixed(2)}|${hardness.toFixed(3)}|${color}`;
+  if (stamp && stampKey === key) return stamp;
+  const canvas = createCanvas(size, size);
+  const ctx = canvasContext(canvas);
+  const center = size / 2;
+  if (hardness >= 0.995 || radius <= 1.5) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(center, center, radius, 0, TAU);
+    ctx.fill();
+  } else {
+    const gradient = ctx.createRadialGradient(
+      center,
+      center,
+      radius * clamp(hardness, 0, 0.98),
+      center,
+      center,
+      radius,
+    );
+    gradient.addColorStop(0, withAlpha(color, 1));
+    gradient.addColorStop(1, withAlpha(color, 0));
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(center, center, radius, 0, TAU);
+    ctx.fill();
+  }
+  stamp = canvas;
+  stampKey = key;
+  return canvas;
+}
+
 export function paintStamp(
   ctx: CanvasRenderingContext2D,
   point: Point,
@@ -38,30 +81,11 @@ export function paintStamp(
   alpha: number,
 ): void {
   const radius = Math.max(0.5, brush.size / 2);
+  const bitmap = stampFor(radius, brush.hardness, color);
   ctx.save();
   ctx.globalCompositeOperation = composite;
   ctx.globalAlpha = clamp(alpha, 0, 1);
-  if (brush.hardness >= 0.995 || radius <= 1.5) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, radius, 0, TAU);
-    ctx.fill();
-  } else {
-    const gradient = ctx.createRadialGradient(
-      point.x,
-      point.y,
-      radius * clamp(brush.hardness, 0, 0.98),
-      point.x,
-      point.y,
-      radius,
-    );
-    gradient.addColorStop(0, withAlpha(color, 1));
-    gradient.addColorStop(1, withAlpha(color, 0));
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, radius, 0, TAU);
-    ctx.fill();
-  }
+  ctx.drawImage(bitmap, point.x - bitmap.width / 2, point.y - bitmap.height / 2);
   ctx.restore();
 }
 

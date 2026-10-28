@@ -26,6 +26,8 @@ export interface SessionLayer {
   blend: BlendMode;
   maskEnabled: boolean;
   maskEditing: boolean;
+  /** Masque d'écretage (calque limité à l'alpha de celui du dessous). */
+  clipToBelow?: boolean;
   text?: TextData;
   path?: PathData;
   shape?: ShapeData;
@@ -127,6 +129,7 @@ async function serializeDocument(doc: PhotoDoc): Promise<SessionDocument> {
       blend: layer.blend,
       maskEnabled: layer.maskEnabled !== false,
       maskEditing: Boolean(layer.maskEditing),
+      clipToBelow: layer.clipToBelow,
       text: layer.text ? JSON.parse(JSON.stringify(layer.text)) as TextData : undefined,
       path: layer.path ? JSON.parse(JSON.stringify(layer.path)) as PathData : undefined,
       shape: layer.shape ? (JSON.parse(JSON.stringify(layer.shape)) as ShapeData) : undefined,
@@ -224,6 +227,7 @@ export async function restoreDocument(snapshot: SessionDocument): Promise<PhotoD
       canvas,
       maskEnabled: stored.maskEnabled,
       maskEditing: stored.maskEditing,
+      clipToBelow: stored.clipToBelow,
       text: stored.text,
       path: stored.path,
       shape: stored.shape,

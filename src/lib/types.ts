@@ -100,6 +100,11 @@ export interface Layer {
   mask?: HTMLCanvasElement;
   /** Masque actif (désactivable sans le supprimer). */
   maskEnabled?: boolean;
+  /**
+   * Masque d'écretage : le calque est découpé par l'alpha du premier calque
+   * non écrêté en dessous (le « calque de base », comme dans Photoshop).
+   */
+  clipToBelow?: boolean;
   /** Le calque travaille sur son masque : les outils peignent dedans. */
   maskEditing?: boolean;
   text?: TextData;
@@ -136,6 +141,11 @@ export interface PhotoDoc {
   colorMode?: ColorMode;
   layers: Layer[];
   activeLayerId: string;
+  /**
+   * Remarques d'import (calques illisibles, masques restaurés…), affichées une
+   * fois à l'ouverture. Absent d'un document créé dans l'application.
+   */
+  warnings?: string[];
 }
 
 export type Selection =

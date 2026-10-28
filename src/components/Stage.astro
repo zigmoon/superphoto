@@ -39,6 +39,10 @@ import DocTabs from './DocTabs.astro';
     </div>
   </div>
 
+  <!-- Anneau du pinceau : affiché à la place du curseur système pour les
+       outils de peinture, il montre exactement la zone atteinte. -->
+  <div class="brush-cursor" id="brush-cursor" hidden aria-hidden="true"></div>
+
   <!-- Zoom + plein écran : ancrés en bas à droite de la prévisualisation.
        Placés dans `.stage` (et non en `position: fixed`), ils suivent donc
        instantanément l’ouverture ou la fermeture des panneaux latéraux. -->

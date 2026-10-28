@@ -90,7 +90,9 @@ from the [releases page](https://github.com/zigmoon/superphoto/releases).
   or project opens in its own tab, each with its own undo history, selection,
   zoom and scroll position.
 - **Photoshop documents**: `.psd` opens with its layers, masks, opacity, blend
-  modes and resolution — and exports back to a layered `.psd`.
+  modes, clipping masks and resolution — and exports back to a layered `.psd`.
+  Masks are read from channels `-2`/`-3` even when Photoshop left the mask
+  rectangle empty, and their flags (disabled, inverted) are honoured.
 - Close a tab with its **×**, a middle click, or `Ctrl/⌘ + W` on the last one.
 - **Autosave**: every open tab is stored in the browser (IndexedDB) after each
   change — closing the tab no longer loses the work.
@@ -149,9 +151,18 @@ image size, canvas size and crop, and they survive `.sps`, `.spp` and PSD
 round-trips (PSD stores them in channel `-2`, so Photoshop opens them as real
 layer masks).
 
+**Clipping masks** (`Ctrl+Alt+G`, or the arrow in the row) behave like
+Photoshop's: the layer is limited to the alpha of the layer below, and the row
+indents by a tab with a bent arrow in the gutter so the group is obvious at a
+glance. The flag is imported from and written back to PSD (`clipping` byte of the
+layer record), so a mockup built with clipping masks keeps its structure in both
+directions. Merging down, merging visible and flattening all compose through the
+same code path, so a clipped layer never spills outside its base.
+
 **Right-click a layer row** for the Photoshop stack menu: rename (`F2`),
 duplicate (`Ctrl+J`), delete, hide/show, mask from the selection, apply, invert,
-duplicate or delete the mask, enable/disable, merge down (`Ctrl+E`), merge
+duplicate or delete the mask, enable/disable, create/release the clipping mask,
+merge down (`Ctrl+E`), merge
 visible, flatten, rasterize, lock, select all layers, keep only this one. On a
 multi-selection the commands apply to the whole group.
 
@@ -168,7 +179,7 @@ image and adjustment groups to find its settings.
 | Tool | What it does |
 | --- | --- |
 | **Select** (`V`) | Pick a layer, draw its **transform box** (8 handles), drag the box to move, drag a handle to resize. |
-| **Marquee** (`M`) | Rectangle, ellipse or lasso selection with a **feather** slider (0–120 px). |
+| **Marquee** (`M`, press again to cycle) | Rectangle, ellipse, **freehand lasso**, **polygonal lasso** and **magnetic lasso**, all with the **feather** slider (0–120 px). |
 | **Magic wand** (`W`) | Select by color proximity — tolerance, contiguous areas, sample the composite image, with the same feather. |
 | **Crop** (`C`) | Free frame or 1:1, 4:3, 16:9, 3:2, 4:5; confirm with Enter. |
 | **Shapes** (`U`) | Rectangle, ellipse, triangle, star, line — fill, stroke, width, radius. The shape stays **editable after it is drawn**: select its layer and the colour fields repaint it live, and the **∅** button removes the fill (outline only) or the stroke (plain fill). |
@@ -179,13 +190,12 @@ image and adjustment groups to find its settings.
 | **Eraser** (`E`) | Clears layer pixels (or hides mask areas). |
 | **Clone stamp** (`S`) | Alt+click sets the source, then paint. Optional corrector blends colors. |
 | **Patch** (`J`) | Draw the area to repair, drag it onto a clean area — with or without the corrector. |
-| **Healing brush** (`K`) | Paint a blemish: four neighbouring discs vote, outliers are rejected, color is matched. |
-| **Light spot** (`L`) | Circular light: diameter, intensity, softness; click to place or drag to size it. |
+| **Healing brush** (`K`) | Paint a blemish: four neighbouring discs vote, outliers are rejected, color is matched. || **Light spot** (`L`) | Circular light: diameter, intensity, softness; click to place or drag to size it. |
 | **Eyedropper** (`I`) | Sample a color (Alt: secondary color). |
 | **Gradient** (`G`) | Linear or radial, foreground → transparent, foreground → background, background → transparent. |
 | **Zoom** (`Z`) | In/out, fit, 100/200/400 %, Ctrl/⌘ + wheel. |
 | **Hand** (`H`) | Move the view; hold Space anywhere. |
-| **Image size** | High-quality resampling of every layer (masks included). |
+| **Image size** | High-quality resampling of every layer (masks included), plus **upscale ×2 / ×4**. |
 | **Canvas size** | Extend or crop with a 3×3 anchor. |
 | **Tonality** | Exposure (EV), brightness, blacks. |
 | **Contrast** | Global contrast. |
@@ -194,9 +204,41 @@ image and adjustment groups to find its settings.
 | **Curves** | Smooth RGB / R / G / B curves, histogram behind the grid, S-curve and lift presets. |
 
 Adjustments preview live on a downscaled copy (fast even on 30 Mpx images) and
-are computed at full resolution when you apply them. The tone tools run through
-a 256-entry lookup table, so levels and curves cost the same as a brightness
+are computed at full resolution when you apply them. The tone tools run througha 256-entry lookup table, so levels and curves cost the same as a brightness
 nudge — and the four curve channels are all applied, not only the one on screen.
+
+### Painting: a real cursor, full opacity, no lag
+
+The five painting tools — **pencil, brush, eraser, clone stamp, healing brush** —
+hide the system crosshair and draw a **ring at the exact brush size**, scaled by
+the zoom, with a black/white double outline and a centre dot when the brush is
+small. You see precisely what the next stamp will cover.
+
+Every tool starts at **100 % opacity** each time you pick it up: lowering the
+opacity to retouch a mask no longer leaves the next brush stroke half
+transparent without any visible reason. Only the size, hardness and spacing are
+remembered.
+
+The stroke loop is built to stay fluid: the brush stamp is rendered **once** into
+a small offscreen canvas instead of rebuilding a radial gradient per stamp, the
+selection geometry is cached as a `Path2D` instead of being rebuilt at every
+stamp, and the SVG overlay is no longer rebuilt during a stroke — only the
+composite is redrawn, which is what actually changes.
+
+### Upscale ×2 and ×4
+
+**Image → Image size** gains a **Resample** row with `Standard`, `×2` and `×4`.
+The upscale pipeline runs entirely in JavaScript
+([`src/lib/upscale.ts`](./src/lib/upscale.ts)):
+
+1. **progressive doubling** — 1 → 2 → 4, each step a high-quality bicubic pass,
+   so no single giant kernel approximates the result;
+2. **luminance unsharp mask** — a separable box blur with a threshold, applied
+   only where there is real detail (no amplified flat noise, no colour fringing).
+
+It runs layer by layer, masks included, yields to the UI every 24 ms (progress
+in the status bar) and works through hidden tabs without stalling. Results are
+undoable like any other resize: 800 × 600 → 3200 × 2400 takes about two seconds.
 
 ### Colours: one swatch, one object, one palette
 
@@ -243,12 +285,42 @@ The **feather** radius is a real gradient mask, not a blurred border: it applies
 to the brush, the eraser, fills, shapes, gradients, the light spot and every
 adjustment, and it is shown in the canvas as a translucent band.
 
+The **Marquee** tool carries five selection modes. Pressing `M` again cycles
+through them, so the whole family stays on one key:
+
+| Mode | Gesture |
+| --- | --- |
+| **Rectangle** / **Ellipse** | Drag to draw. |
+| **Lasso** | Draw freehand around the subject; releasing closes the loop. |
+| **Polygonal lasso** | Click each corner; click the first point, double-click or press `Enter` to close, `Esc` to abandon. Vertices and a rubber band are drawn live. |
+| **Magnetic lasso** | Drag along the outline: every pointer move is snapped to the strongest contrast edge within the **Snap width** radius. |
+
+The magnetic lasso builds a Sobel edge map of the layer (or of the composite,
+with *Sample the composite image* from the wand) once per gesture — on a
+downscaled copy, so 88 ms for a 20 Mpx document, then 0.06 ms per move. The
+luminance is premultiplied by alpha, so the transparent edge of a cut-out layer
+is a real contour and can be snapped to. Snapped points are densified so a jump
+from one edge to the other never cuts a corner.
+
+**Removing a selection** works the way you expect, in four places:
+
+| Gesture | Effect |
+| --- | --- |
+| Click again inside the selected area (magic wand) | Deselects it |
+| Click without dragging (marquee / lasso) | Deselects |
+| Right-click in the canvas → **Deselect all** | Deselects |
+| `Ctrl/⌘ + D` or `Esc` | Deselects — even right after dragging a slider |
+
+Keyboard shortcuts are no longer swallowed by a focused slider: touching the
+feather range used to disable `Esc`, `Ctrl+D` and `Ctrl+Z`, which left the
+marching ants on screen with no obvious way out.
+
 **Right-click in the canvas** to get the selection menu:
 
 - **Fill the selection** (`Alt + Backspace`) with the primary color
 - **Clear content** (`Del`)
 - **Invert selection**
-- **Deselect** (`Esc`)
+- **Deselect all** (`Ctrl/⌘ + D`, `Esc`)
 - **Select all** (`Ctrl/⌘ + A`)
 
 ### Selecting and transforming an object

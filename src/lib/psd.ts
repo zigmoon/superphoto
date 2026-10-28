@@ -9,12 +9,14 @@
  * Ce que l'on relit :
  *   • tous les calques de pixels, 8 et 16 bits, RVB / CMJN / niveaux de gris ;
  *   • opacité, modes de fusion, visibilité, noms Unicode, verrouillage ;
- *   • masques de fusion (canal -2) ;
+ *   • masques de fusion (canaux -2 / -3), y compris désactivés, inversés ou
+ *     sans rectangle déclaré ;
+ *   • masques d'écretage (drapeau de clipping du calque) ;
  *   • les groupes sont dépliés — un dossier devient ses calques, dans l'ordre.
  *
  * Ce que l'on écrit : un PSD conforme, calques RVB 8 bits compressés en RLE,
- * masques inclus, plus l'image fusionnée en fin de fichier (celle que lisent
- * les visionneuses et les systèmes d'exploitation).
+ * masques et écretages inclus, plus l'image fusionnée en fin de fichier (celle
+ * que lisent les visionneuses et les systèmes d'exploitation).
  */
 import { ByteWriter, inflate, packBits, planarChannels, unpackBits } from './bytes';
 import { t } from './i18n';
@@ -155,7 +157,13 @@ interface PsdLayerRecord {
   blend: BlendMode;
   visible: boolean;
   locked: boolean;
+  /** Masque d'écretage : le calque est limité à l'alpha de celui du dessous. */
+  clipping: boolean;
   maskRect: { top: number; left: number; bottom: number; right: number } | null;
+  /** Le bloc masque existe, même si son rectangle est vide (masque plein calque). */
+  hasMaskData: boolean;
+  /** Drapeaux Photoshop du masque : bit 1 = désactivé, bit 2 = inversé. */
+  maskFlags: number;
   sectionType: number;
 }
 
@@ -266,22 +274,26 @@ function parseLayerRecord(reader: Reader): PsdLayerRecord {
   }
   const blendKey = reader.ascii(4);
   const opacity = reader.u8();
-  reader.u8(); // clipping
+  const clipping = reader.u8() === 1;
   const flags = reader.u8();
   reader.u8(); // filler
   const extraLength = reader.u32();
   const extraEnd = reader.offset + extraLength;
 
   let maskRect: PsdLayerRecord['maskRect'] = null;
+  let maskFlags = 0;
   const maskLength = reader.u32();
-  if (maskLength > 0) {
+  const hasMaskData = maskLength > 0;
+  if (hasMaskData) {
     const maskTop = reader.i32();
     const maskLeft = reader.i32();
     const maskBottom = reader.i32();
     const maskRight = reader.i32();
     reader.u8(); // couleur par défaut
-    reader.u8(); // drapeaux
+    maskFlags = reader.u8();
     if (maskLength > 18) reader.skip(maskLength - 18);
+    // Un rectangle nul signifie « le masque couvre tout le calque » : on
+    // laissera l'import choisir la bonne taille plutôt que de perdre le masque.
     if (maskBottom > maskTop && maskRight > maskLeft) {
       maskRect = { top: maskTop, left: maskLeft, bottom: maskBottom, right: maskRight };
     }
@@ -319,7 +331,10 @@ function parseLayerRecord(reader: Reader): PsdLayerRecord {
     blend: PSD_TO_BLEND[blendKey.trim()] ?? 'source-over',
     visible: (flags & 0x02) !== 0,
     locked: (flags & 0x01) !== 0,
+    clipping,
     maskRect,
+    hasMaskData,
+    maskFlags,
     sectionType,
   };
 }
@@ -332,6 +347,58 @@ function cmykToRgb(c: number, m: number, y: number, k: number): [number, number,
     Math.round((1 - m / 255) * ink * 255),
     Math.round((1 - y / 255) * ink * 255),
   ];
+}
+
+interface MaskArea {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+/**
+ * Vérifie qu'un canal RLE tombe juste pour une taille donnée.
+ *
+ * C'est le seul moyen fiable de retrouver la taille d'un masque dont Photoshop
+ * a laissé le rectangle à zéro : la table des lignes doit totaliser exactement
+ * la longueur du canal. Les canaux ZIP ou bruts ne sont pas mesurables ici et
+ * restent acceptés (on fait alors confiance au rectangle).
+ */
+function rleSizeMatches(data: Uint8Array, width: number, height: number): boolean {
+  if (width <= 0 || height <= 0 || data.length < 2) return false;
+  try {
+    const reader = new Reader(data);
+    if (reader.u16() !== 1) return true;
+    if (data.length < 2 + height * 2) return false;
+    let total = 2 + height * 2;
+    for (let row = 0; row < height; row += 1) total += reader.u16();
+    // Photoshop laisse parfois un octet de remplissage en fin de canal.
+    return total === data.length || total === data.length - 1;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Choisit le rectangle du masque parmi les hypothèses possibles : rectangle
+ * déclaré, puis calque, puis document. Le premier qui tombe juste gagne.
+ */
+function chooseMaskArea(data: Uint8Array, candidates: MaskArea[]): MaskArea | null {
+  const usable = candidates.filter(
+    (area, index) =>
+      area.right > area.left &&
+      area.bottom > area.top &&
+      candidates.findIndex(
+        (other) =>
+          other.top === area.top &&
+          other.left === area.left &&
+          other.bottom === area.bottom &&
+          other.right === area.right,
+      ) === index,
+  );
+  if (usable.length === 0) return null;
+  const match = usable.find((area) => rleSizeMatches(data, area.right - area.left, area.bottom - area.top));
+  return match ?? usable[0] ?? null;
 }
 
 /**
@@ -395,6 +462,7 @@ export async function parsePsd(blob: Blob): Promise<PhotoDoc> {
   reader.offset = resourceEnd;
 
   const layers: Layer[] = [];
+  let skipped = 0;
   const layerMaskLength = reader.u32();
   const layerMaskEnd = reader.offset + layerMaskLength;
   if (reader.offset + 4 <= layerMaskEnd) {
@@ -421,72 +489,79 @@ export async function parsePsd(blob: Blob): Promise<PhotoDoc> {
 
       // Un groupe ou un séparateur de section n'a pas de pixels : on le saute.
       if (record.sectionType === 1 || record.sectionType === 2 || record.sectionType === 3) continue;
-      if (layerWidth === 0 || layerHeight === 0) continue;
+      // Un calque sans pixels n'a d'intérêt que s'il porte un masque. Sinon
+      // c'est un objet dynamique ou un calque vide : on le signale à l'arrivée.
+      if ((layerWidth === 0 || layerHeight === 0) && !record.hasMaskData) {
+        skipped += 1;
+        continue;
+      }
 
       const byId = new Map(chunks.map((chunk) => [chunk.id, chunk.data]));
       const canvas = createCanvas(width, height);
-      const ctx = canvasContext(canvas);
-      const plane = (id: number): Promise<Uint8Array> => {
-        const data = byId.get(id);
-        if (!data) return Promise.resolve(new Uint8Array(layerWidth * layerHeight).fill(255));
-        return readChannel(data, layerWidth, layerHeight, depth);
-      };
+      if (layerWidth > 0 && layerHeight > 0) {
+        const ctx = canvasContext(canvas);
+        const plane = (id: number): Promise<Uint8Array> => {
+          const data = byId.get(id);
+          if (!data) return Promise.resolve(new Uint8Array(layerWidth * layerHeight).fill(255));
+          return readChannel(data, layerWidth, layerHeight, depth);
+        };
 
-      const readPlanes = async (): Promise<Uint8Array> => {
-        const result = new Uint8Array(width * height * 4);
-        if (isGray) {
-          const g = await plane(0);
-          for (let y = 0; y < layerHeight; y += 1) {
-            for (let x = 0; x < layerWidth; x += 1) {
-              const value = g[y * layerWidth + x] ?? 0;
-              const index = ((record.top + y) * width + (record.left + x)) * 4;
-              result[index] = value;
-              result[index + 1] = value;
-              result[index + 2] = value;
-              result[index + 3] = 255;
+        const readPlanes = async (): Promise<Uint8Array> => {
+          const result = new Uint8Array(width * height * 4);
+          if (isGray) {
+            const g = await plane(0);
+            for (let y = 0; y < layerHeight; y += 1) {
+              for (let x = 0; x < layerWidth; x += 1) {
+                const value = g[y * layerWidth + x] ?? 0;
+                const index = ((record.top + y) * width + (record.left + x)) * 4;
+                result[index] = value;
+                result[index + 1] = value;
+                result[index + 2] = value;
+                result[index + 3] = 255;
+              }
+            }
+          } else if (isCmyk) {
+            const [c, m, y1, k] = await Promise.all([plane(0), plane(1), plane(2), plane(3)]);
+            for (let row = 0; row < layerHeight; row += 1) {
+              for (let x = 0; x < layerWidth; x += 1) {
+                const source = row * layerWidth + x;
+                const [r, g, b] = cmykToRgb(c[source] ?? 0, m[source] ?? 0, y1[source] ?? 0, k[source] ?? 0);
+                const index = ((record.top + row) * width + (record.left + x)) * 4;
+                result[index] = r;
+                result[index + 1] = g;
+                result[index + 2] = b;
+                result[index + 3] = 255;
+              }
+            }
+          } else {
+            const [r, g, b] = await Promise.all([plane(0), plane(1), plane(2)]);
+            const alpha = byId.has(-1) ? await plane(-1) : null;
+            for (let row = 0; row < layerHeight; row += 1) {
+              for (let x = 0; x < layerWidth; x += 1) {
+                const source = row * layerWidth + x;
+                const index = ((record.top + row) * width + (record.left + x)) * 4;
+                result[index] = r[source] ?? 0;
+                result[index + 1] = g[source] ?? 0;
+                result[index + 2] = b[source] ?? 0;
+                result[index + 3] = alpha ? (alpha[source] ?? 255) : 255;
+              }
             }
           }
-        } else if (isCmyk) {
-          const [c, m, y1, k] = await Promise.all([plane(0), plane(1), plane(2), plane(3)]);
-          for (let row = 0; row < layerHeight; row += 1) {
-            for (let x = 0; x < layerWidth; x += 1) {
-              const source = row * layerWidth + x;
-              const [r, g, b] = cmykToRgb(c[source] ?? 0, m[source] ?? 0, y1[source] ?? 0, k[source] ?? 0);
-              const index = ((record.top + row) * width + (record.left + x)) * 4;
-              result[index] = r;
-              result[index + 1] = g;
-              result[index + 2] = b;
-              result[index + 3] = 255;
-            }
-          }
-        } else {
-          const [r, g, b] = await Promise.all([plane(0), plane(1), plane(2)]);
-          const alpha = byId.has(-1) ? await plane(-1) : null;
-          for (let row = 0; row < layerHeight; row += 1) {
-            for (let x = 0; x < layerWidth; x += 1) {
-              const source = row * layerWidth + x;
-              const index = ((record.top + row) * width + (record.left + x)) * 4;
-              result[index] = r[source] ?? 0;
-              result[index + 1] = g[source] ?? 0;
-              result[index + 2] = b[source] ?? 0;
-              result[index + 3] = alpha ? (alpha[source] ?? 255) : 255;
-            }
-          }
+          return result;
+        };
+
+        const pixels = await readPlanes();
+        const stride = width * 4;
+        // On colle la région du calque directement dans son canvas.
+        const temp = createCanvas(layerWidth, layerHeight);
+        const tempCtx = canvasContext(temp);
+        const image = new ImageData(layerWidth, layerHeight);
+        for (let row = 0; row < layerHeight; row += 1) {
+          image.data.set(pixels.subarray(row * stride, row * stride + layerWidth * 4), row * layerWidth * 4);
         }
-        return result;
-      };
-
-      const pixels = await readPlanes();
-      const stride = width * 4;
-      // On colle la région du calque directement dans son canvas.
-      const temp = createCanvas(layerWidth, layerHeight);
-      const tempCtx = canvasContext(temp);
-      const image = new ImageData(layerWidth, layerHeight);
-      for (let row = 0; row < layerHeight; row += 1) {
-        image.data.set(pixels.subarray(row * stride, row * stride + layerWidth * 4), row * layerWidth * 4);
+        tempCtx.putImageData(image, 0, 0);
+        ctx.drawImage(temp, record.left, record.top);
       }
-      tempCtx.putImageData(image, 0, 0);
-      ctx.drawImage(temp, record.left, record.top);
 
       const layer: Layer = {
         id: `psd-${layers.length}-${Math.random().toString(36).slice(2, 7)}`,
@@ -497,29 +572,47 @@ export async function parsePsd(blob: Blob): Promise<PhotoDoc> {
         blend: record.blend,
         locked: record.locked,
         canvas,
+        clipToBelow: record.clipping || undefined,
       };
 
-      // Masque de fusion : canal -2, gris (0 = masqué, 255 = visible).
-      const maskData = byId.get(-2);
-      if (maskData && record.maskRect) {
-        const maskWidth = record.maskRect.right - record.maskRect.left;
-        const maskHeight = record.maskRect.bottom - record.maskRect.top;
-        if (maskWidth > 0 && maskHeight > 0) {
-          const gray = await readChannel(maskData, maskWidth, maskHeight, depth);
-          const mask = createCanvas(width, height);
-          const maskCtx = canvasContext(mask);
-          const image2 = new ImageData(maskWidth, maskHeight);
-          for (let index = 0; index < gray.length; index += 1) {
-            image2.data[index * 4] = 255;
-            image2.data[index * 4 + 1] = 255;
-            image2.data[index * 4 + 2] = 255;
-            image2.data[index * 4 + 3] = gray[index] ?? 255;
+      // Masque de fusion : Photoshop écrit le masque utilisateur en -2 et sa
+      // version « réelle » en -3 quand un masque vectoriel existe aussi. Le
+      // rectangle peut être vide (0,0,0,0) — le masque couvre alors tout le
+      // calque — il ne faut donc pas le perdre.
+      const maskData = byId.get(-3) ?? byId.get(-2);
+      if (maskData && record.hasMaskData) {
+        const candidates: MaskArea[] = [];
+        if (record.maskRect) candidates.push(record.maskRect);
+        if (layerWidth > 0 && layerHeight > 0) {
+          candidates.push({ top: record.top, left: record.left, bottom: record.bottom, right: record.right });
+        }
+        candidates.push({ top: 0, left: 0, bottom: height, right: width });
+        const area = chooseMaskArea(maskData, candidates);
+        const maskWidth = area ? area.right - area.left : 0;
+        const maskHeight = area ? area.bottom - area.top : 0;
+        if (area && maskWidth > 0 && maskHeight > 0) {
+          try {
+            const gray = await readChannel(maskData, maskWidth, maskHeight, depth);
+            const inverted = (record.maskFlags & 0x04) !== 0;
+            const mask = createCanvas(width, height);
+            const maskCtx = canvasContext(mask);
+            const image2 = new ImageData(maskWidth, maskHeight);
+            for (let index = 0; index < maskWidth * maskHeight; index += 1) {
+              const value = gray[index] ?? 255;
+              image2.data[index * 4] = 255;
+              image2.data[index * 4 + 1] = 255;
+              image2.data[index * 4 + 2] = 255;
+              image2.data[index * 4 + 3] = inverted ? 255 - value : value;
+            }
+            const tempMask = createCanvas(maskWidth, maskHeight);
+            canvasContext(tempMask).putImageData(image2, 0, 0);
+            maskCtx.drawImage(tempMask, area.left, area.top);
+            layer.mask = mask;
+            // Bit 1 des drapeaux : masque désactivé dans Photoshop.
+            layer.maskEnabled = (record.maskFlags & 0x02) === 0;
+          } catch {
+            // Masque illisible : on garde au moins les pixels du calque.
           }
-          const tempMask = createCanvas(maskWidth, maskHeight);
-          canvasContext(tempMask).putImageData(image2, 0, 0);
-          maskCtx.drawImage(tempMask, record.maskRect.left, record.maskRect.top);
-          layer.mask = mask;
-          layer.maskEnabled = true;
         }
       }
 
@@ -545,6 +638,10 @@ export async function parsePsd(blob: Blob): Promise<PhotoDoc> {
   }
 
   if (layers.length === 0) throw new Error(t('psd.noLayers'));
+  const warnings: string[] = [];
+  if (skipped > 0) warnings.push(t('msg.psdSkipped', { n: skipped }));
+  const clipped = layers.filter((layer) => layer.clipToBelow).length;
+  if (clipped > 0) warnings.push(t('msg.psdClipCount', { n: clipped }));
   // Le PSD empile du bas vers le haut ; c'est déjà l'ordre de `doc.layers`.
   return {
     name: 'Photoshop',
@@ -555,6 +652,7 @@ export async function parsePsd(blob: Blob): Promise<PhotoDoc> {
     colorMode,
     layers,
     activeLayerId: layers[layers.length - 1]?.id ?? '',
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
@@ -752,7 +850,7 @@ export async function serializePsd(doc: PhotoDoc, composite: HTMLCanvasElement):
 
     records.ascii('8BIM').ascii((BLEND_TO_PSD[layer.blend] ?? 'norm').padEnd(4, ' ').slice(0, 4));
     records.u8(Math.round(Math.min(1, Math.max(0, layer.opacity)) * 255));
-    records.u8(0); // clipping
+    records.u8(layer.clipToBelow ? 1 : 0); // masque d'écretage
     // bit 0 = pixel protégé (verrou), bit 1 = visible.
     records.u8((layer.visible ? 0x02 : 0) | (layer.locked ? 0x01 : 0));
     records.u8(0);
@@ -760,7 +858,9 @@ export async function serializePsd(doc: PhotoDoc, composite: HTMLCanvasElement):
     // Données supplémentaires : masque, plages de fusion, nom, nom Unicode.
     const extra: ByteWriter = new ByteWriter(256);
     if (maskPlanes) {
-      extra.u32(20).i32(0).i32(0).i32(height).i32(width).u8(0).u8(0).u16(0);
+      // Drapeaux du masque : bit 1 = désactivé (le masque reste stocké).
+      const maskFlags = layer.maskEnabled === false ? 0x02 : 0;
+      extra.u32(20).i32(0).i32(0).i32(height).i32(width).u8(0).u8(maskFlags).u16(0);
     } else {
       extra.u32(0);
     }

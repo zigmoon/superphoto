@@ -20,6 +20,7 @@ import {
 } from './plugins';
 import {
   compositeCanvas,
+  compositeLayers,
   createDocument,
   createLayer,
   cropDocument,
@@ -47,6 +48,7 @@ import {
   supportsAvifExport,
 } from './io';
 import { createMask, drawMaskedLayer, drawMaskThumb, flattenMask, invertMask } from './mask';
+import { buildEdgeMap, densify, snapToEdge, type EdgeMap } from './lasso';
 import {
   brushColorForMask,
   cloneStamp,
@@ -93,6 +95,7 @@ import { colorModeShort, convertDocumentMode } from './colorspace';
 import { looksLikeProject, parseProject, serializeProject, SPS_MIME } from './project';
 import { isPsdName, looksLikePsd, parsePsd, PSD_MIME, serializePsd } from './psd';
 import { tiffFromDocument } from './tiff';
+import { upscaleDocument } from './upscale';
 import { initRangePaint, paintRange, paintRanges } from './ranges';
 import { magicWandSelection } from './selection';
 import {
@@ -183,7 +186,7 @@ const HANDLE_CURSORS: Record<ScaleHandle, string> = {
 
 type DragState =
   | { kind: 'pan'; clientX: number; clientY: number; scrollLeft: number; scrollTop: number }
-  | { kind: 'marquee'; mode: 'rect' | 'ellipse' | 'lasso'; start: Point; current: Point; points: Point[] }
+  | { kind: 'marquee'; mode: 'rect' | 'ellipse' | 'lasso' | 'magnetic'; start: Point; current: Point; points: Point[] }
   | { kind: 'crop'; start: Point; current: Point; ratio: number | null }
   | { kind: 'shape'; start: Point; current: Point }
   | { kind: 'gradient'; start: Point; current: Point }
@@ -274,12 +277,12 @@ const TOOLS: Record<ToolId, ToolInfo> = {
   select: { shortcut: 'V', cursor: 'default' },
   marquee: { shortcut: 'M', cursor: 'crosshair' },
   'magic-wand': { shortcut: 'W', cursor: 'crosshair' },
-  pencil: { shortcut: 'N', cursor: 'crosshair' },
-  brush: { shortcut: 'B', cursor: 'crosshair' },
-  eraser: { shortcut: 'E', cursor: 'crosshair' },
-  stamp: { shortcut: 'S', cursor: 'crosshair' },
+  pencil: { shortcut: 'N', cursor: 'none' },
+  brush: { shortcut: 'B', cursor: 'none' },
+  eraser: { shortcut: 'E', cursor: 'none' },
+  stamp: { shortcut: 'S', cursor: 'none' },
   patch: { shortcut: 'J', cursor: 'crosshair' },
-  heal: { shortcut: 'K', cursor: 'crosshair' },
+  heal: { shortcut: 'K', cursor: 'none' },
   spotlight: { shortcut: 'L', cursor: 'crosshair' },
   crop: { shortcut: 'C', cursor: 'crosshair' },
   shapes: { shortcut: 'U', cursor: 'crosshair' },
@@ -290,6 +293,31 @@ const TOOLS: Record<ToolId, ToolInfo> = {
   zoom: { shortcut: 'Z', cursor: 'zoom-in' },
   hand: { shortcut: 'H', cursor: 'grab' },
 };
+
+/** Types d'`input` qui ne saisissent pas de texte : les raccourcis restent actifs. */
+const NON_TEXT_INPUTS = new Set([
+  'range',
+  'checkbox',
+  'radio',
+  'button',
+  'submit',
+  'reset',
+  'color',
+  'file',
+]);
+
+/** Outils dont le pointeur est un anneau à la taille du pinceau. */
+const RING_TOOLS = new Set<ToolId>(['pencil', 'brush', 'eraser', 'stamp', 'heal']);
+
+/** Modes de l'outil Zone de sélection. */
+type MarqueeMode = 'rect' | 'ellipse' | 'lasso' | 'polygon' | 'magnetic';
+
+const MARQUEE_MODES: MarqueeMode[] = ['rect', 'ellipse', 'lasso', 'polygon', 'magnetic'];
+
+/** Libellé de chaque mode, dans la langue courante. */
+function marqueeModeLabel(mode: MarqueeMode): string {
+  return t(`opt.${mode}`);
+}
 
 /** Libellé et aide de l'outil, dans la langue courante. */
 function toolLabel(id: ToolId): string {
@@ -591,7 +619,17 @@ export class SuperPhotoEditor {
   };
 
   private cropRatio: number | null = null;
-  private marqueeMode: 'rect' | 'ellipse' | 'lasso' = 'rect';
+  private marqueeMode: MarqueeMode = 'rect';
+  /** Lasso polygonal en cours : sommets déjà posés. */
+  private lassoPoints: Point[] = [];
+  /** Point de rebond du tracé polygonal (suit le curseur). */
+  private lassoHover: Point | null = null;
+  /** Heure du dernier sommet posé, pour reconnaître le double-clic. */
+  private lassoClickAt = 0;
+  /** Largeur d'aimantation du lasso magnétique, en pixels écran. */
+  private magneticWidth = 22;
+  /** Carte de contours mémorisée pour le geste en cours. */
+  private edgeCache: { canvas: HTMLCanvasElement; key: string; map: EdgeMap } | null = null;
   private brush: BrushSettings = { size: 56, hardness: 0.75, opacity: 1, spacing: 0.12 };
   private pencilOptions = { size: 3, opacity: 1 };
   private wand: WandSettings = { tolerance: 32, contiguous: true, merged: false };
@@ -624,6 +662,24 @@ export class SuperPhotoEditor {
   private resizeRatioLock = true;
   private resizeRatio = 1;
   private resizeAnchor = { x: 0.5, y: 0.5 };
+  /** Facteur d'agrandissement choisi dans la fenêtre Taille de l'image (1, 2 ou 4). */
+  private resizeUpscale = 1;
+  private resizeBusy = false;
+  /** Anneau de curseur des outils de peinture, dimensionné sur le pinceau. */
+  private brushCursor: HTMLElement | null = null;
+  /** Dernière position écran du pointeur, pour l'anneau. */
+  private pointerClient: Point | null = null;
+  /** Géométrie de la sélection, recalculée seulement quand elle change. */
+  private selectionCache: {
+    selection: Selection;
+    size: string;
+    path: Path2D;
+    rule: CanvasFillRule;
+    bounds: Rect;
+    points: number;
+  } | null = null;
+  /** Contexte 1 × 1 servant aux tests « ce point est-il dans la sélection ? ». */
+  private hitContext: CanvasRenderingContext2D | null = null;
   private exportFormat: ExportFormat = 'png';
   private saving = false;
   /** Portée choisie dans la fenêtre d'enregistrement du paquet. */
@@ -667,6 +723,7 @@ export class SuperPhotoEditor {
     this.canvasStack = byId('canvas-stack');
     this.display = byId<HTMLCanvasElement>('display-canvas');
     this.overlay = document.getElementById('overlay') as unknown as SVGSVGElement;
+    this.brushCursor = document.getElementById('brush-cursor');
     this.emptyState = byId('empty-state');
     this.layersList = byId('layers-list');
     this.toolOptions = byId('tool-options');
@@ -913,9 +970,14 @@ export class SuperPhotoEditor {
   private updateCanvasCursor(): void {
     if (this.spaceDown) {
       this.display.style.cursor = 'grab';
+      this.updateBrushCursor();
       return;
     }
-    if (this.activeTool !== 'select' || this.drag) return;
+    if (this.activeTool !== 'select' || this.drag) {
+      this.updateBrushCursor();
+      return;
+    }
+    this.updateBrushCursor();
     if (this.activeLayer?.locked) {
       this.hoverHandle = null;
       this.display.style.cursor = TOOLS[this.activeTool].cursor;
@@ -931,6 +993,50 @@ export class SuperPhotoEditor {
     this.display.style.cursor = box && pointInRect(this.pointer.x, this.pointer.y, box)
       ? 'move'
       : TOOLS[this.activeTool].cursor;
+  }
+
+  /** Diamètre de l'outil de peinture actif, en pixels du document. */
+  private brushDiameter(): number {
+    return this.activeTool === 'pencil' ? this.pencilOptions.size : this.brush.size;
+  }
+
+  /**
+   * Anneau de curseur : il suit le pointeur et épouse la taille réelle du
+   * pinceau à l'échelle du zoom. Un seul élément déplacé par `transform`, donc
+   * aucun recalcul de mise en page pendant le geste.
+   */
+  private updateBrushCursor(): void {
+    const node = this.brushCursor;
+    if (!node) return;
+    const position = this.pointerClient;
+    if (!position || !RING_TOOLS.has(this.activeTool) || !this.doc) {
+      if (!node.hidden) node.hidden = true;
+      return;
+    }
+    // Hors de la toile (panneaux, barre d'onglets), pas d'anneau — sauf pendant
+    // un trait, où il doit suivre même si le geste sort du cadre.
+    const rect = this.display.getBoundingClientRect();
+    const inside =
+      position.x >= rect.left &&
+      position.x <= rect.right &&
+      position.y >= rect.top &&
+      position.y <= rect.bottom;
+    if (!inside && !this.drag) {
+      if (!node.hidden) node.hidden = true;
+      return;
+    }
+    const diameter = Math.max(3, this.brushDiameter() * this.zoom);
+    node.hidden = false;
+    node.style.width = `${diameter}px`;
+    node.style.height = `${diameter}px`;
+    node.style.transform =
+      `translate(${position.x - diameter / 2}px, ${position.y - diameter / 2}px)`;
+    node.classList.toggle('is-small', diameter < 22);
+  }
+
+  private hideBrushCursor(): void {
+    if (!this.brushCursor) return;
+    this.brushCursor.hidden = true;
   }
 
   /**
@@ -1363,7 +1469,8 @@ export class SuperPhotoEditor {
       (this.gizmoVisible && Boolean(this.activeLayer)) ||
       (this.activeTool === 'spotlight' && this.pointerInside) ||
       (this.activeTool === 'pen' && Boolean(activePath?.path?.anchors.length)) ||
-      (this.activeTool === 'text' && Boolean(activeText?.text?.bounds));
+      (this.activeTool === 'text' && Boolean(activeText?.text?.bounds)) ||
+      this.lassoPoints.length > 0;
     if (!hasOverlay && this.overlay.childElementCount === 0) return;
     const ns = 'http://www.w3.org/2000/svg';
     this.overlay.innerHTML = '';
@@ -1449,12 +1556,29 @@ export class SuperPhotoEditor {
 
     const drag = this.drag;
     if (drag?.kind === 'marquee') {
-      if (drag.mode === 'lasso') {
+      if (drag.mode === 'lasso' || drag.mode === 'magnetic') {
+        // Le lasso magnétique accumule jusqu'à 4 000 points : les redessiner
+        // tous à chaque déplacement alourdirait l'overlay pour rien, un point
+        // sur trois suffit largement à l'aperçu.
+        const previewPoints = drag.points.length > 600
+          ? drag.points.filter((_, index) => index % 3 === 0 || index === drag.points.length - 1)
+          : drag.points;
         add('polyline', {
-          points: drag.points.map((p) => `${p.x},${p.y}`).join(' '),
-          class: 'selection-preview',
+          points: previewPoints.map((p) => `${p.x},${p.y}`).join(' '),
+          class: drag.mode === 'magnetic' ? 'selection-preview is-magnetic' : 'selection-preview',
           'vector-effect': 'non-scaling-stroke',
         });
+        if (drag.mode === 'magnetic') {
+          const edge = drag.points[drag.points.length - 1];
+          if (edge) {
+            add('circle', {
+              cx: edge.x,
+              cy: edge.y,
+              r: 3 / this.zoom,
+              class: 'lasso-anchor is-current',
+            });
+          }
+        }
       } else {
         const rect = normalizeRect(drag.start, drag.current);
         if (drag.mode === 'rect') {
@@ -1476,6 +1600,56 @@ export class SuperPhotoEditor {
             'vector-effect': 'non-scaling-stroke',
           });
         }
+      }
+    }
+
+    // Lasso polygonal en cours : ligne brisée + élastique vers le curseur.
+    if (this.lassoPoints.length > 0) {
+      const points = this.lassoPoints;
+      const hover = this.lassoHover;
+      add('polyline', {
+        points: points.map((p) => `${p.x},${p.y}`).join(' '),
+        class: 'selection-preview',
+        'vector-effect': 'non-scaling-stroke',
+      });
+      const last = points[points.length - 1];
+      if (hover && last && (hover.x !== last.x || hover.y !== last.y)) {
+        add('line', {
+          x1: last.x,
+          y1: last.y,
+          x2: hover.x,
+          y2: hover.y,
+          class: 'selection-preview is-rubber',
+          'vector-effect': 'non-scaling-stroke',
+        });
+      }
+      const first = points[0];
+      if (first && hover && points.length >= 3) {
+        const closing = Math.hypot(hover.x - first.x, hover.y - first.y) <= 12 / this.zoom;
+        add('line', {
+          x1: hover.x,
+          y1: hover.y,
+          x2: first.x,
+          y2: first.y,
+          class: closing ? 'selection-preview is-closing' : 'selection-preview is-rubber',
+          'vector-effect': 'non-scaling-stroke',
+        });
+      }
+      if (first) {
+        add('circle', {
+          cx: first.x,
+          cy: first.y,
+          r: 4 / this.zoom,
+          class: 'lasso-anchor is-first',
+        });
+      }
+      for (const point of points.slice(1)) {
+        add('circle', {
+          cx: point.x,
+          cy: point.y,
+          r: 2 / this.zoom,
+          class: 'lasso-anchor',
+        });
       }
     }
 
@@ -1840,6 +2014,7 @@ export class SuperPhotoEditor {
     this.viewport.scrollLeft += after.left + px * after.width - anchor.x;
     this.viewport.scrollTop += after.top + py * after.height - anchor.y;
     this.invalidateDisplayRect();
+    this.updateBrushCursor();
   }
 
   private fitToView(): void {
@@ -1853,6 +2028,7 @@ export class SuperPhotoEditor {
     this.viewport.scrollLeft = 0;
     this.viewport.scrollTop = 0;
     this.invalidateDisplayRect();
+    this.updateBrushCursor();
     this.lastFitKey = this.fitKey();
   }
 
@@ -2058,6 +2234,13 @@ export class SuperPhotoEditor {
     eye.dataset.layerAction = 'visibility';
     eye.dataset.state = 'hidden';
 
+    // Flèche d'écretage : elle n'apparaît que sur un calque écrêté, exactement
+    // comme la ligne décalée du panneau Calques de Photoshop.
+    const clip = document.createElement('button');
+    clip.className = 'layer-clip';
+    clip.dataset.layerAction = 'clip';
+    clip.innerHTML = icon('clip');
+
     // Vignette des pixels : cliquer dessus revient aux pixels quand on peignait
     // le masque (geste Photoshop).
     const pixelSlot = document.createElement('button');
@@ -2091,7 +2274,7 @@ export class SuperPhotoEditor {
     lock.className = 'layer-lock';
     lock.dataset.layerAction = 'lock';
 
-    row.append(eye, pixelSlot, maskSlot, meta, lock);
+    row.append(clip, eye, pixelSlot, maskSlot, meta, lock);
     return row;
   }
 
@@ -2138,7 +2321,18 @@ export class SuperPhotoEditor {
       row.classList.toggle('is-selected', this.selectedLayerIds.has(layer.id));
       row.classList.toggle('is-locked', Boolean(layer.locked));
       row.classList.toggle('is-hidden-layer', !layer.visible);
+      row.classList.toggle('is-clipped', Boolean(layer.clipToBelow));
       row.setAttribute('aria-selected', String(this.selectedLayerIds.has(layer.id)));
+
+      const clipButton = row.querySelector<HTMLButtonElement>('.layer-clip');
+      if (clipButton) {
+        const state = layer.clipToBelow ? 'clipped' : 'free';
+        if (clipButton.dataset.state !== state) {
+          clipButton.dataset.state = state;
+          clipButton.title = layer.clipToBelow ? t('layers.releaseClip') : t('layers.createClip');
+          clipButton.setAttribute('aria-label', clipButton.title);
+        }
+      }
 
       const eye = row.querySelector<HTMLButtonElement>('.layer-eye');
       if (eye) {
@@ -2405,12 +2599,13 @@ export class SuperPhotoEditor {
     );
     this.setText('status-zoom', `${Math.round(this.zoom * 100)} %`);
     if (this.selection) {
-      const bounds = selectionBounds(this.selection);
+      const doc = this.doc;
       const feather = selectionFeather(this.selection);
-      const points =
-        this.selection.type === 'poly'
-          ? selectionRings(this.selection).reduce((total, ring) => total + ring.length, 0)
-          : 0;
+      const cached = doc
+        ? this.selectionGeometry(this.selection, doc.width, doc.height)
+        : null;
+      const bounds = cached?.bounds ?? selectionBounds(this.selection);
+      const points = cached?.points ?? 0;
       const rounded = { w: Math.round(bounds.w), h: Math.round(bounds.h) };
       this.setText(
         'status-selection',
@@ -2474,15 +2669,21 @@ export class SuperPhotoEditor {
       this.renderToolOptions();
       this.renderOverlay();
       this.updateStatus();
+      this.updateBrushCursor();
       return;
     }
     // Quitter la plume termine proprement le tracé en cours.
     if (this.activeTool === 'pen' && tool !== 'pen' && this.penDrawing) this.commitPenPath();
+    if (this.activeTool === 'marquee' && tool !== 'marquee') this.cancelLasso();
     this.penDrawing = false;
     this.penHover = null;
     this.penCloseHover = false;
     this.penHoverAnchor = -1;
     this.activeTool = tool;
+    // Chaque outil repart à 100 % d'opacité : une opacité abaissée pour un
+    // détourage restait collée au pinceau, à la gomme et au crayon suivants —
+    // un trait « fantôme » qu'on ne s'expliquait plus.
+    this.resetToolOpacity(tool);
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
       button.classList.toggle('is-active', button.dataset.tool === tool);
     }
@@ -2490,6 +2691,23 @@ export class SuperPhotoEditor {
     this.renderOverlay();
     this.renderToolOptions();
     this.updateStatus();
+    if (RING_TOOLS.has(tool)) this.updateBrushCursor();
+    else this.hideBrushCursor();
+  }
+
+  /** Opacité par défaut des outils : plein, à chaque prise en main. */
+  private resetToolOpacity(tool: ToolId): void {
+    if (tool === 'pencil') {
+      this.pencilOptions.opacity = 100;
+      return;
+    }
+    if (tool === 'gradient') {
+      this.gradientOptions.opacity = 100;
+      return;
+    }
+    if (RING_TOOLS.has(tool)) {
+      this.brush.opacity = 1;
+    }
   }
 
   private renderToolOptions(): void {
@@ -2583,12 +2801,28 @@ export class SuperPhotoEditor {
 
   private marqueeOptionsHtml(): string {
     const mode = this.marqueeMode;
+    const hint = mode === 'polygon'
+      ? t('opt.polyLassoHint')
+      : mode === 'magnetic'
+        ? t('opt.magneticLassoHint')
+        : mode === 'lasso'
+          ? t('opt.lassoHint')
+          : '';
+    const magnetic = mode === 'magnetic'
+      ? `
+      <label class="range-field">${escapeHtml(t('opt.magnetWidth'))} <output data-magnetic-output>${Math.round(this.magneticWidth)} px</output>
+        <input type="range" min="6" max="80" step="1" data-magnetic-field="width" value="${Math.round(this.magneticWidth)}">
+      </label>`
+      : '';
     return `
-      <div class="segmented" data-marquee-mode>
-        <button data-marquee="rect" class="${mode === 'rect' ? 'is-active' : ''}">${escapeHtml(t('opt.rect'))}</button>
-        <button data-marquee="ellipse" class="${mode === 'ellipse' ? 'is-active' : ''}">${escapeHtml(t('opt.ellipse'))}</button>
-        <button data-marquee="lasso" class="${mode === 'lasso' ? 'is-active' : ''}">${escapeHtml(t('opt.lasso'))}</button>
+      <div class="segmented wrap" data-marquee-mode>
+        ${MARQUEE_MODES.map(
+          (value) =>
+            `<button data-marquee="${value}" class="${mode === value ? 'is-active' : ''}">${escapeHtml(marqueeModeLabel(value))}</button>`,
+        ).join('')}
       </div>
+      ${magnetic}
+      ${hint ? `<p class="options-hint">${escapeHtml(hint)}</p>` : ''}
       ${this.featherFieldHtml()}
       <div class="button-row">
         <button class="btn ghost sm" data-action="select-all">${escapeHtml(t('opt.selectAll'))}</button>
@@ -3837,8 +4071,13 @@ export class SuperPhotoEditor {
       }
       const marquee = (event.target as HTMLElement).closest<HTMLElement>('[data-marquee]');
       if (marquee) {
-        this.marqueeMode = (marquee.dataset.marquee as 'rect' | 'ellipse' | 'lasso') ?? 'rect';
+        const mode = marquee.dataset.marquee as MarqueeMode | undefined;
+        this.marqueeMode = mode && MARQUEE_MODES.includes(mode) ? mode : 'rect';
+        // Changer de mode abandonne le tracé en cours : un lasso polygonal à
+        // moitié posé n'a plus de sens quand on passe à l'aimant.
+        this.cancelLasso();
         this.renderToolOptions();
+        this.renderOverlay();
         return;
       }
       const gradient = (event.target as HTMLElement).closest<HTMLElement>('[data-gradient]');
@@ -3853,6 +4092,7 @@ export class SuperPhotoEditor {
         if (Number.isFinite(size) && size > 0) {
           this.brush.size = size;
           this.renderToolOptions();
+          this.updateBrushCursor();
         }
         return;
       }
@@ -3938,8 +4178,9 @@ export class SuperPhotoEditor {
       this.onWandFieldInput(target);
       return;
     }
-    if (target.matches('[data-patch-field]')) {
-      this.onPatchFieldInput(target);
+    if (target.matches('[data-magnetic-field]')) {
+      this.onMagneticFieldInput(target as HTMLInputElement);
+      return;
     }
     if (target.matches('[data-feather-field]')) {
       this.onFeatherInput(Number(target.value));
@@ -3948,6 +4189,14 @@ export class SuperPhotoEditor {
     if (target.matches('[data-spot-field]')) {
       this.onSpotlightInput(target as HTMLInputElement);
     }
+  }
+
+  /** Largeur d'aimantation du lasso magnétique (pixels écran). */
+  private onMagneticFieldInput(target: HTMLInputElement): void {
+    this.magneticWidth = clamp(Math.round(Number(target.value) || 22), 6, 80);
+    const output = this.toolOptions.querySelector<HTMLElement>('[data-magnetic-output]');
+    if (output) output.textContent = `${this.magneticWidth} px`;
+    this.syncRangeFills();
   }
 
   private onFeatherInput(value: number): void {
@@ -4225,6 +4474,7 @@ export class SuperPhotoEditor {
     const output = this.toolOptions.querySelector(`[data-paint-output="${key}"]`);
     if (output && label) output.textContent = label;
     this.syncRangeFills();
+    this.updateBrushCursor();
   }
 
   private onWandFieldInput(
@@ -4325,9 +4575,7 @@ export class SuperPhotoEditor {
         this.fillSelection(this.primaryColor);
         break;
       case 'deselect':
-        this.selection = null;
-        this.renderOverlay();
-        this.renderToolOptions();
+        this.deselectSelection(true);
         break;
       case 'invert-selection':
         if (this.selection) {
@@ -4512,6 +4760,14 @@ export class SuperPhotoEditor {
         this.renderAll();
         this.renderToolOptions();
         this.setMessage(layer.maskEditing ? t('msg.maskEditing') : t('msg.pixelsEditing'));
+        return;
+      }
+
+      if (action === 'clip') {
+        const layer = this.doc.layers.find((item) => item.id === layerId);
+        if (!layer) return;
+        if (this.doc.activeLayerId !== layerId) this.selectLayer(layerId);
+        this.toggleClippingMask();
         return;
       }
 
@@ -4856,6 +5112,37 @@ export class SuperPhotoEditor {
     });
     this.renderAll();
     this.setMessage(layer.locked ? t('msg.layerLocked', { name: layer.name }) : t('msg.layerUnlocked', { name: layer.name }));
+  }
+
+  /**
+   * Masque d'écretage (Ctrl+Alt+G) : le calque actif est limité à l'alpha du
+   * calque situé juste en dessous. Un second appel le libère.
+   */
+  private toggleClippingMask(): void {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) return;
+    if (this.layerLocked(layer)) return;
+    const index = doc.layers.findIndex((item) => item.id === layer.id);
+    if (index <= 0) {
+      this.toast(t('msg.clipNeedsBase'), 'info');
+      return;
+    }
+    if (this.adjustment) this.cancelAdjustment();
+    const before = Boolean(layer.clipToBelow);
+    const after = !before;
+    const apply = (value: boolean): void => {
+      layer.clipToBelow = value || undefined;
+      this.layersDirty = true;
+      this.renderAll();
+    };
+    apply(after);
+    this.history.push({
+      label: after ? t('msg.clipCreated') : t('msg.clipReleased'),
+      undo: () => apply(before),
+      redo: () => apply(after),
+    });
+    this.setMessage(after ? t('msg.clipCreated') : t('msg.clipReleased'));
   }
 
   private toggleMaskForActiveLayer(): void {
@@ -5269,13 +5556,7 @@ export class SuperPhotoEditor {
       ctx.fillStyle = doc.background === 'black' ? '#000000' : '#ffffff';
       ctx.fillRect(0, 0, doc.width, doc.height);
     }
-    for (const layer of layers) {
-      ctx.globalAlpha = layer.opacity;
-      ctx.globalCompositeOperation = layer.blend;
-      drawMaskedLayer(ctx, layer);
-      ctx.globalAlpha = 1;
-      ctx.globalCompositeOperation = 'source-over';
-    }
+    compositeLayers(ctx, layers, doc.width, doc.height);
     merged.opacity = 1;
     merged.blend = 'source-over';
     merged.visible = true;
@@ -5635,25 +5916,32 @@ export class SuperPhotoEditor {
       return;
     }
     if (this.layerLocked(layer) || this.layerLocked(below)) return;
+    // La fusion passe par la composition normale : masques, modes de fusion et
+    // masque d'écretage du calque supérieur sont donc respectés, et le calque
+    // du dessous ne conserve pas de masque qui s'appliquerait deux fois.
     const belowBefore = cloneCanvas(below.canvas);
-    const belowProps = { opacity: below.opacity, blend: below.blend, kind: below.kind, text: below.text, path: below.path };
-    const ctx = canvasContext(below.canvas);
-    ctx.save();
-    ctx.globalAlpha = layer.opacity;
-    ctx.globalCompositeOperation = layer.blend;
-    if (layer.mask && layer.maskEnabled !== false) {
-      const blended = blendThroughMask(below.canvas, layer.canvas, layer.mask);
-      ctx.clearRect(0, 0, below.canvas.width, below.canvas.height);
-      ctx.drawImage(blended, 0, 0);
-    } else {
-      ctx.drawImage(layer.canvas, 0, 0);
-    }
-    ctx.restore();
+    const belowProps = {
+      opacity: below.opacity,
+      blend: below.blend,
+      kind: below.kind,
+      text: below.text,
+      path: below.path,
+      mask: below.mask,
+      maskEnabled: below.maskEnabled,
+      clipToBelow: below.clipToBelow,
+    };
+    const merged = createCanvas(below.canvas.width, below.canvas.height);
+    compositeLayers(canvasContext(merged), [below, layer], merged.width, merged.height);
+    below.canvas = merged;
     below.kind = 'raster';
     below.text = undefined;
     below.path = undefined;
+    below.shape = undefined;
+    below.mask = undefined;
+    below.maskEnabled = undefined;
     below.opacity = 1;
     below.blend = 'source-over';
+    below.clipToBelow = undefined;
     doc.layers.splice(index, 1);
     doc.activeLayerId = below.id;
     this.history.push({
@@ -5665,6 +5953,9 @@ export class SuperPhotoEditor {
         below.kind = belowProps.kind;
         below.text = belowProps.text;
         below.path = belowProps.path;
+        below.mask = belowProps.mask;
+        below.maskEnabled = belowProps.maskEnabled;
+        below.clipToBelow = belowProps.clipToBelow;
         doc.layers.splice(index, 0, layer);
         doc.activeLayerId = layer.id;
         this.invalidateBounds();
@@ -5673,18 +5964,16 @@ export class SuperPhotoEditor {
       redo: () => {
         const current = doc.layers.findIndex((item) => item.id === layer.id);
         if (current >= 0) doc.layers.splice(current, 1);
-        const context = canvasContext(below.canvas);
-        context.clearRect(0, 0, below.canvas.width, below.canvas.height);
-        context.save();
-        context.globalAlpha = layer.opacity;
-        context.globalCompositeOperation = layer.blend;
-        context.drawImage(layer.canvas, 0, 0);
-        context.restore();
+        below.canvas = merged;
         below.kind = 'raster';
         below.text = undefined;
         below.path = undefined;
+        below.shape = undefined;
+        below.mask = undefined;
+        below.maskEnabled = undefined;
         below.opacity = 1;
         below.blend = 'source-over';
+        below.clipToBelow = undefined;
         doc.activeLayerId = below.id;
         this.invalidateBounds();
         this.renderAll();
@@ -6368,7 +6657,23 @@ export class SuperPhotoEditor {
       });
     }
 
-    byId<HTMLButtonElement>('resize-apply').addEventListener('click', () => this.applyResize());
+    for (const button of this.resizeModal.querySelectorAll<HTMLElement>('[data-resample]')) {
+      button.addEventListener('click', () => {
+        const factor = Number(button.dataset.resample) || 1;
+        this.resizeUpscale = factor === 2 || factor === 4 ? factor : 1;
+        this.updateResampleUI();
+        // ×2 / ×4 fixent les dimensions : l'utilisateur voit tout de suite
+        // la taille obtenue et peut encore l'ajuster à la main.
+        if (this.resizeUpscale > 1 && this.doc) {
+          const targetW = Math.round(this.doc.width * this.resizeUpscale);
+          const targetH = Math.round(this.doc.height * this.resizeUpscale);
+          width.value = String(Math.min(16384, targetW));
+          height.value = String(Math.min(16384, targetH));
+        }
+      });
+    }
+
+    byId<HTMLButtonElement>('resize-apply').addEventListener('click', () => void this.applyResize());
     byId<HTMLButtonElement>('resize-cancel').addEventListener('click', () => this.closeResizeDialog());
     byId<HTMLButtonElement>('resize-close').addEventListener('click', () => this.closeResizeDialog());
     this.resizeModal.addEventListener('click', (event) => {
@@ -6403,6 +6708,9 @@ export class SuperPhotoEditor {
       : t('resize.canvasSubtitle');
     byId('resize-dpi-row').hidden = mode !== 'image';
     byId('resize-anchor-row').hidden = mode !== 'canvas';
+    byId('resize-resample-row').hidden = mode !== 'image';
+    this.resizeUpscale = 1;
+    this.updateResampleUI();
     byId('resize-note').textContent = mode === 'image'
       ? t('resize.quality')
       : t('resize.anchorHint');
@@ -6433,9 +6741,23 @@ export class SuperPhotoEditor {
     }
   }
 
-  private applyResize(): void {
+  /** Met en avant le mode de rééchantillonnage choisi et sa légende. */
+  private updateResampleUI(): void {
+    for (const button of this.resizeModal.querySelectorAll<HTMLElement>('[data-resample]')) {
+      const factor = Number(button.dataset.resample) || 1;
+      button.classList.toggle('is-active', factor === this.resizeUpscale);
+    }
+    const note = this.resizeModal.querySelector<HTMLElement>('#resize-resample-note');
+    if (!note) return;
+    note.textContent = this.resizeUpscale > 1
+      ? t('resize.resampleUpscaleNote', { n: this.resizeUpscale })
+      : t('resize.resampleStandardNote');
+  }
+
+  private async applyResize(): Promise<void> {
     const doc = this.doc;
     if (!doc) return;
+    if (this.resizeBusy) return;
     const width = clamp(Math.round(Number(byId<HTMLInputElement>('resize-width').value) || 0), 1, 16384);
     const height = clamp(Math.round(Number(byId<HTMLInputElement>('resize-height').value) || 0), 1, 16384);
     const dpi = clamp(Math.round(Number(byId<HTMLInputElement>('resize-dpi').value) || 72), 1, 1200);
@@ -6447,14 +6769,55 @@ export class SuperPhotoEditor {
       this.closeResizeDialog();
       return;
     }
+    // Le mode ×2 / ×4 ne s'applique qu'à un agrandissement : réduire une image
+    // n'a rien à gagner au pipeline d'agrandissement.
+    const upscale =
+      this.resizeMode === 'image' && this.resizeUpscale > 1 && width > doc.width && height > doc.height;
+    // Un canvas au-delà d'environ 120 Mpx échoue silencieusement dans les
+    // navigateurs (limite de surface) : on refuse avant de tout recalculer.
+    if (upscale && width * height > 120_000_000) {
+      this.toast(t('msg.upscaleTooLarge', { w: width, h: height }), 'error');
+      return;
+    }
     const before = snapshotGeometry(doc);
     let after: DocGeometrySnapshot;
     if (this.resizeMode === 'image') {
-      after = resizeDocumentImage(doc, width, height, dpi, SMOOTHING_QUALITY[this.preferences.quality]);
+      if (upscale) {
+        const apply = byId<HTMLButtonElement>('resize-apply');
+        const cancel = byId<HTMLButtonElement>('resize-cancel');
+        this.resizeBusy = true;
+        apply.disabled = true;
+        cancel.disabled = true;
+        apply.textContent = t('resize.working');
+        this.setMessage(t('msg.upscaling', { n: this.resizeUpscale }), 60_000);
+        try {
+          await upscaleDocument(doc, width, height, dpi, {
+            detail: 0.6,
+            onProgress: (value) => {
+              this.setMessage(
+                t('msg.upscalingProgress', { n: this.resizeUpscale, p: Math.round(value * 100) }),
+                60_000,
+              );
+            },
+          });
+        } finally {
+          this.resizeBusy = false;
+          apply.disabled = false;
+          cancel.disabled = false;
+          apply.textContent = t('common.apply');
+        }
+        after = snapshotGeometry(doc);
+      } else {
+        after = resizeDocumentImage(doc, width, height, dpi, SMOOTHING_QUALITY[this.preferences.quality]);
+      }
     } else {
       after = resizeDocumentCanvas(doc, width, height, this.resizeAnchor.x, this.resizeAnchor.y);
     }
-    const label = this.resizeMode === 'image' ? t('resize.imageTitle') : t('resize.canvasTitle');
+    const label = upscale
+      ? t('resize.upscaleLabel', { n: this.resizeUpscale })
+      : this.resizeMode === 'image'
+        ? t('resize.imageTitle')
+        : t('resize.canvasTitle');
     this.history.push({
       label,
       undo: () => {
@@ -6477,6 +6840,7 @@ export class SuperPhotoEditor {
     this.renderAll();
     this.renderToolOptions();
     this.setMessage(`${label} · ${doc.width} × ${doc.height} px`);
+    if (upscale) this.toast(t('msg.upscaled', { w: doc.width, h: doc.height }), 'success');
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -6952,6 +7316,7 @@ export class SuperPhotoEditor {
     this.viewport.addEventListener('pointerleave', () => {
       if (!this.drag) {
         this.pointerInside = false;
+        this.hideBrushCursor();
         this.updateStatus();
       }
     });
@@ -7069,8 +7434,8 @@ export class SuperPhotoEditor {
             run: () => this.handleAction('invert-selection'),
           },
           {
-            label: t('menu.deselect'),
-            hint: hint('esc'),
+            label: t('menu.deselectAll'),
+            hint: hint('ctrl-d'),
             disabled: !hasSelection,
             run: () => this.handleAction('deselect'),
           },
@@ -7170,6 +7535,13 @@ export class SuperPhotoEditor {
             disabled: !mask || multi,
             checked: Boolean(mask) && layer.maskEnabled !== false,
             run: () => this.setMaskEnabled(layer, layer.maskEnabled === false),
+          },
+          {
+            label: layer.clipToBelow ? t('menu.releaseClip') : t('menu.createClip'),
+            hint: hint('ctrl-alt-g'),
+            disabled: multi || doc.layers.indexOf(layer) === 0,
+            checked: Boolean(layer.clipToBelow),
+            run: () => this.toggleClippingMask(),
           },
         ],
         [
@@ -7319,6 +7691,7 @@ export class SuperPhotoEditor {
     // Mesure fraîche au début du geste : un panneau refermé ou un onglet
     // ouvert entre-temps a pu déplacer la toile.
     this.invalidateDisplayRect();
+    this.pointerClient = { x: event.clientX, y: event.clientY };
     const point = this.docPoint(event);
     this.pointer = point;
     this.pointerInside = true;
@@ -7373,13 +7746,33 @@ export class SuperPhotoEditor {
         break;
       }
       case 'marquee':
-        this.drag = {
-          kind: 'marquee',
-          mode: this.marqueeMode,
-          start: point,
-          current: point,
-          points: [point],
-        };
+        // Un polygone en cours n'appartient qu'au mode polygonal : démarrer un
+        // autre type de sélection l'abandonne proprement.
+        if (this.marqueeMode !== 'polygon' && this.lassoPoints.length > 0) {
+          this.lassoPoints = [];
+          this.lassoHover = null;
+        }
+        if (this.marqueeMode === 'magnetic') {
+          const start = this.magnetPoint(point);
+          this.drag = {
+            kind: 'marquee',
+            mode: 'magnetic',
+            start,
+            current: start,
+            points: [start],
+          };
+        } else if (this.marqueeMode === 'polygon') {
+          this.addPolygonVertex(point);
+          break;
+        } else {
+          this.drag = {
+            kind: 'marquee',
+            mode: this.marqueeMode,
+            start: point,
+            current: point,
+            points: [point],
+          };
+        }
         break;
       case 'magic-wand':
         this.applyMagicWand(point, event.shiftKey);
@@ -7440,6 +7833,10 @@ export class SuperPhotoEditor {
    * on le traite au prochain rAF (flush immédiat au relâchement).
    */
   private onPointerMove(event: PointerEvent): void {
+    this.pointerClient = { x: event.clientX, y: event.clientY };
+    // L'anneau suit le pointeur sans attendre la frame suivante : c'est ce qui
+    // donne l'impression que le curseur « colle » au geste.
+    if (RING_TOOLS.has(this.activeTool)) this.updateBrushCursor();
     this.pendingMove = event;
     if (this.moveFrame) return;
     this.moveFrame = window.requestAnimationFrame(() => {
@@ -7473,6 +7870,7 @@ export class SuperPhotoEditor {
     if (!drag) {
       if (this.activeTool === 'spotlight') this.renderOverlay();
       if (this.activeTool === 'pen') this.updatePenHover(event);
+      if (this.lassoPoints.length > 0 && inside) this.updateLassoHover(this.docPoint(event));
       this.updateCanvasCursor();
       this.updateStatus();
       return;
@@ -7485,7 +7883,17 @@ export class SuperPhotoEditor {
       case 'marquee': {
         const point = this.docPoint(event);
         drag.current = point;
-        if (drag.mode === 'lasso') {
+        if (drag.mode === 'magnetic') {
+          const snapped = this.magnetPoint(point);
+          const last = drag.points[drag.points.length - 1];
+          if (last && Math.hypot(snapped.x - last.x, snapped.y - last.y) > 1.5 / this.zoom) {
+            // Les points intermédiaires évitent qu'un saut d'un bord à l'autre
+            // ne coupe l'angle : la sélection reste fidèle au contour.
+            for (const step of densify(last, snapped, 3 / this.zoom)) drag.points.push(step);
+            drag.points.push(snapped);
+            if (drag.points.length > 4000) drag.points.splice(0, drag.points.length - 4000);
+          }
+        } else if (drag.mode === 'lasso') {
           const last = drag.points[drag.points.length - 1];
           if (!last || Math.hypot(point.x - last.x, point.y - last.y) > 2 / this.zoom) {
             drag.points.push(point);
@@ -7531,6 +7939,7 @@ export class SuperPhotoEditor {
         this.onPenMove(event);
         break;
     }
+    this.updateBrushCursor();
     this.updateStatus();
   }
 
@@ -8070,8 +8479,10 @@ export class SuperPhotoEditor {
     }
     ctx.restore();
     drag.last = { ...to };
+    // Pendant un trait, seul le composite change : reconstruire l'overlay SVG à
+    // chaque tampon (et y redessiner les pointillés d'une sélection de 2 600
+    // points) était la principale cause de latence ressentie au pinceau.
     this.renderCanvas();
-    this.renderOverlay();
   }
 
   private onPaintDrag(drag: Extract<DragState, { kind: 'paint' }>, point: Point): void {
@@ -8121,6 +8532,13 @@ export class SuperPhotoEditor {
     const doc = this.doc;
     const layer = this.activeLayer;
     if (!doc || !layer) return;
+    // Recliquer dans la zone déjà sélectionnée la désélectionne : c'est le
+    // geste attendu pour « enlever » les pointillés, au lieu de devoir
+    // retrouver un raccourci clavier.
+    if (!add && this.selection && this.pointInSelection(point)) {
+      this.deselectSelection(true);
+      return;
+    }
     const source = this.wand.merged ? this.display : layer.canvas;
     const found = magicWandSelection(
       source,
@@ -8130,10 +8548,8 @@ export class SuperPhotoEditor {
       this.wand.contiguous,
     );
     if (!found) {
-      this.selection = null;
+      this.deselectSelection();
       this.setMessage(t('msg.noPixels'));
-      this.renderOverlay();
-      this.renderToolOptions();
       return;
     }
     if (add && this.selection && this.selection.type === 'poly' && found.type === 'poly') {
@@ -8151,9 +8567,9 @@ export class SuperPhotoEditor {
     } else {
       this.selection = { ...found, feather: this.selectionFeather };
     }
-    const bounds = selectionBounds(this.selection);
+    const bounds = this.selectionGeometry(this.selection, doc.width, doc.height).bounds;
     this.setMessage(
-      `Baguette magique · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px`,
+      `${t('tool.magic-wand.label')} · ${Math.round(bounds.w)} × ${Math.round(bounds.h)} px`,
     );
     this.renderOverlay();
     this.renderToolOptions();
@@ -8239,34 +8655,132 @@ export class SuperPhotoEditor {
   }
 
   private finishMarquee(drag: Extract<DragState, { kind: 'marquee' }>): void {
-    if (drag.mode === 'lasso') {
-      if (drag.points.length >= 3) {
-        this.selection = {
-          type: 'poly',
-          points: drag.points.map((point) => ({ ...point })),
-          invert: false,
-          feather: this.selectionFeather,
-        };
-      } else {
-        this.selection = null;
+    if (drag.mode === 'lasso' || drag.mode === 'magnetic') {
+      // Un geste trop court n'est pas un lasso : c'est un clic, donc on
+      // désélectionne (geste attendu pour retirer les pointillés).
+      if (drag.points.length < 3) {
+        this.deselectSelection();
+        return;
       }
-    } else {
-      const rect = normalizeRect(drag.start, drag.current);
-      if (rect.w < 2 || rect.h < 2) this.selection = null;
-      else {
-        this.selection = {
-          type: drag.mode === 'rect' ? 'rect' : 'ellipse',
-          rect: {
-            x: Math.round(rect.x),
-            y: Math.round(rect.y),
-            w: Math.round(rect.w),
-            h: Math.round(rect.h),
-          },
-          invert: false,
-          feather: this.selectionFeather,
-        };
+      this.commitLasso(drag.points);
+      return;
+    }
+    const rect = normalizeRect(drag.start, drag.current);
+    if (rect.w < 2 || rect.h < 2) this.selection = null;
+    else {
+      this.selection = {
+        type: drag.mode === 'rect' ? 'rect' : 'ellipse',
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          w: Math.round(rect.w),
+          h: Math.round(rect.h),
+        },
+        invert: false,
+        feather: this.selectionFeather,
+      };
+    }
+    this.renderOverlay();
+    this.renderToolOptions();
+    this.updateStatus();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Lassos : main levée, polygonal, magnétique
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Carte de contours du lasso magnétique, mémorisée tant que le calque et la
+   * taille du document ne changent pas : la recalculer à chaque geste coûterait
+   * un Sobel complet pour rien.
+   */
+  private magnetPoint(point: Point): Point {
+    const doc = this.doc;
+    const layer = this.activeLayer;
+    if (!doc || !layer) return { ...point };
+    const source = this.wand.merged ? this.display : layer.canvas;
+    const key = `${doc.width}x${doc.height}:${layer.id}:${this.wand.merged ? 'merged' : 'layer'}`;
+    const cache = this.edgeCache;
+    if (!cache || cache.key !== key || cache.canvas !== source) {
+      this.edgeCache = { canvas: source, key, map: buildEdgeMap(source) };
+    }
+    const map = this.edgeCache?.map;
+    if (!map) return { ...point };
+    return snapToEdge(map, point, this.magneticWidth / this.zoom);
+  }
+
+  /** Ajoute un sommet au lasso polygonal, ou ferme la sélection. */
+  private addPolygonVertex(point: Point): void {
+    const points = this.lassoPoints;
+    const now = performance.now();
+    const tolerance = 12 / this.zoom;
+    const first = points[0];
+    const last = points[points.length - 1];
+    // Double-clic = deux clics rapprochés **et** au même endroit : deux sommets
+    // distincts cliqués vite restent deux sommets.
+    const doubleClick =
+      now - this.lassoClickAt < 320 &&
+      Boolean(last) &&
+      Math.hypot(point.x - last!.x, point.y - last!.y) <= tolerance;
+    if (points.length >= 3 && first) {
+      // Clic sur le premier sommet, ou double-clic : on ferme le polygone.
+      const onFirst = Math.hypot(point.x - first.x, point.y - first.y) <= tolerance;
+      if (onFirst || doubleClick) {
+        this.commitLasso(points);
+        return;
       }
     }
+    // Deux clics au même endroit (double-clic) ne doivent pas empiler deux
+    // sommets : le contour deviendrait dégénéré.
+    if (!last || Math.hypot(point.x - last.x, point.y - last.y) > 1.5 / this.zoom) {
+      points.push(point);
+    }
+    this.lassoClickAt = now;
+    this.lassoHover = point;
+    this.renderOverlay();
+    this.updateStatus();
+    this.setMessage(
+      t('msg.lassoVertices', { n: points.length }),
+    );
+  }
+
+  /** Point de rebond du tracé polygonal. */
+  private updateLassoHover(point: Point): void {
+    this.lassoHover = point;
+    this.renderOverlay();
+  }
+
+  /** Transforme une suite de points en sélection polygonale. */
+  private commitLasso(points: Point[]): void {
+    const doc = this.doc;
+    this.lassoPoints = [];
+    this.lassoHover = null;
+    this.edgeCache = null;
+    if (!doc || points.length < 3) {
+      this.renderOverlay();
+      this.renderToolOptions();
+      this.updateStatus();
+      return;
+    }
+    this.selection = {
+      type: 'poly',
+      points: points.map((point) => ({ ...point })),
+      invert: false,
+      feather: this.selectionFeather,
+    };
+    const bounds = this.selectionGeometry(this.selection, doc.width, doc.height).bounds;
+    this.setMessage(t('msg.lassoDone', { w: Math.round(bounds.w), h: Math.round(bounds.h) }));
+    this.renderOverlay();
+    this.renderToolOptions();
+    this.updateStatus();
+  }
+
+  /** Abandonne un lasso polygonal en cours (changement d'outil, Échap…). */
+  private cancelLasso(): void {
+    if (this.lassoPoints.length === 0 && !this.lassoHover) return;
+    this.lassoPoints = [];
+    this.lassoHover = null;
+    this.edgeCache = null;
     this.renderOverlay();
     this.renderToolOptions();
     this.updateStatus();
@@ -8760,8 +9274,74 @@ export class SuperPhotoEditor {
     const doc = this.doc;
     const selection = this.selection;
     if (!doc || !selection) return;
-    const geometry = selectionPath(selection, doc.width, doc.height);
+    const geometry = this.selectionGeometry(selection, doc.width, doc.height);
     ctx.clip(geometry.path, geometry.rule);
+  }
+
+  /**
+   * Géométrie de la sélection, mémorisée.
+   *
+   * `selectionPath` reconstruit un `Path2D` complet : sur une baguette magique à
+   * 2 600 points, la refaire à chaque tampon de pinceau coûtait plus cher que la
+   * peinture elle-même. La sélection étant remplacée (jamais mutée) à chaque
+   * changement, l'identité de l'objet suffit comme clé.
+   */
+  private selectionGeometry(
+    selection: Selection,
+    width: number,
+    height: number,
+  ): { path: Path2D; rule: CanvasFillRule; bounds: Rect; points: number } {
+    const size = `${width}x${height}`;
+    const cache = this.selectionCache;
+    if (cache && cache.selection === selection && cache.size === size) return cache;
+    const geometry = selectionPath(selection, width, height);
+    const entry = {
+      selection,
+      size,
+      path: geometry.path,
+      rule: geometry.rule,
+      bounds: selectionBounds(selection),
+      points:
+        selection.type === 'poly'
+          ? selectionRings(selection).reduce((total, ring) => total + ring.length, 0)
+          : 0,
+    };
+    this.selectionCache = entry;
+    return entry;
+  }
+
+  /** Le point (coordonnées document) tombe-t-il dans la sélection active ? */
+  private pointInSelection(point: Point): boolean {
+    const doc = this.doc;
+    const selection = this.selection;
+    if (!doc || !selection) return false;
+    if (selection.type === 'rect' || selection.type === 'ellipse') {
+      const r = selection.rect;
+      const inside =
+        selection.type === 'rect'
+          ? point.x >= r.x && point.y >= r.y && point.x <= r.x + r.w && point.y <= r.y + r.h
+          : ((point.x - (r.x + r.w / 2)) / (r.w / 2)) ** 2 +
+              ((point.y - (r.y + r.h / 2)) / (r.h / 2)) ** 2 <=
+            1;
+      return selection.invert ? !inside : inside;
+    }
+    if (!this.hitContext) {
+      const probe = createCanvas(1, 1);
+      this.hitContext = canvasContext(probe);
+    }
+    const geometry = this.selectionGeometry(selection, doc.width, doc.height);
+    const hit = this.hitContext.isPointInPath(geometry.path, point.x, point.y, geometry.rule);
+    return selection.invert ? !hit : hit;
+  }
+
+  /** Désélectionne et remet l'interface d'accord avec l'état réel. */
+  private deselectSelection(message = false): void {
+    if (!this.selection) return;
+    this.selection = null;
+    this.renderOverlay();
+    this.renderToolOptions();
+    this.updateStatus();
+    if (message) this.setMessage(t('msg.deselected'));
   }
 
   /** Masque flou de la sélection courante, à la résolution du document. */
@@ -9526,13 +10106,16 @@ export class SuperPhotoEditor {
   private bindKeyboard(): void {
     const isEditable = (target: EventTarget | null): boolean => {
       const element = target as HTMLElement | null;
-      return Boolean(
-        element &&
-          (element.tagName === 'INPUT' ||
-            element.tagName === 'TEXTAREA' ||
-            element.tagName === 'SELECT' ||
-            element.isContentEditable),
-      );
+      if (!element) return false;
+      if (element.isContentEditable) return true;
+      if (element.tagName === 'TEXTAREA' || element.tagName === 'SELECT') return true;
+      if (element.tagName !== 'INPUT') return false;
+      // Les curseurs (contour progressif, taille du pinceau…) et les cases à
+      // cocher ne sont pas des champs de saisie : les avaler faisait perdre
+      // Échap, Ctrl+D et Ctrl+Z dès qu'on avait touché une glissière, donc
+      // impossible de désélectionner au clavier.
+      const type = (element as HTMLInputElement).type || 'text';
+      return !NON_TEXT_INPUTS.has(type);
     };
 
     document.addEventListener('keydown', (event) => {
@@ -9592,6 +10175,14 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
+        // Lasso polygonal : Échap abandonne le tracé en cours, sans toucher à
+        // la sélection déjà validée.
+        if (this.lassoPoints.length > 0 && !isEditable(event.target)) {
+          event.preventDefault();
+          this.cancelLasso();
+          this.setMessage(t('msg.lassoCancelled'));
+          return;
+        }
         // Plume : Échap termine le tracé et rend la main à la sélection, le
         // geste « j'ai fini » de Figma.
         if (this.activeTool === 'pen') {
@@ -9600,8 +10191,7 @@ export class SuperPhotoEditor {
           event.preventDefault();
           return;
         }
-        this.selection = null;
-        this.renderOverlay();
+        this.deselectSelection();
         event.preventDefault();
         return;
       }
@@ -9668,6 +10258,12 @@ export class SuperPhotoEditor {
         if (key === 'j') {
           event.preventDefault();
           this.duplicateActiveLayer();
+          return;
+        }
+        // Ctrl+Alt+G : masque d'écretage, comme dans Photoshop.
+        if (key === 'g' && event.altKey) {
+          event.preventDefault();
+          this.toggleClippingMask();
           return;
         }
         if (key === 'e' && event.altKey) {
@@ -9776,6 +10372,12 @@ export class SuperPhotoEditor {
           this.applyCrop();
           return;
         }
+        // Lasso polygonal : Entrée ferme le polygone.
+        if (this.lassoPoints.length >= 3) {
+          event.preventDefault();
+          this.commitLasso(this.lassoPoints);
+          return;
+        }
         // Entrée termine le tracé mais laisse la plume en main : on enchaîne
         // directement sur le tracé suivant.
         if (this.activeTool === 'pen' && this.penDrawing) {
@@ -9851,6 +10453,18 @@ export class SuperPhotoEditor {
       const tool = shortcuts[key];
       if (tool) {
         event.preventDefault();
+        // Ré-appuyer sur M fait défiler les cinq modes de sélection, comme le
+        // cycle d'outils de Photoshop : on reste dans le même geste.
+        if (tool === 'marquee' && this.activeTool === 'marquee') {
+          const index = MARQUEE_MODES.indexOf(this.marqueeMode);
+          const next = MARQUEE_MODES[(index + 1) % MARQUEE_MODES.length] ?? 'rect';
+          this.marqueeMode = next;
+          this.cancelLasso();
+          this.renderToolOptions();
+          this.renderOverlay();
+          this.setMessage(marqueeModeLabel(next));
+          return;
+        }
         this.setTool(tool);
         return;
       }
@@ -9874,6 +10488,7 @@ export class SuperPhotoEditor {
         if (this.activeTool === 'pencil' || this.activeTool === 'brush' || this.activeTool === 'eraser' || this.activeTool === 'stamp' || this.activeTool === 'heal') {
           this.renderToolOptions();
         }
+        this.updateBrushCursor();
         this.setMessage(`Taille ${this.brush.size} px`);
       }
     });
@@ -10093,6 +10708,17 @@ export class SuperPhotoEditor {
     return error instanceof Error ? error.message : String(error);
   }
 
+  /** Remarques d'import : affichées une seule fois, puis oubliées. */
+  private reportDocWarnings(doc: PhotoDoc): void {
+    const warnings = doc.warnings;
+    doc.warnings = undefined;
+    if (!warnings || warnings.length === 0) return;
+    for (let index = 0; index < warnings.length; index += 1) {
+      const message = warnings[index];
+      if (message) window.setTimeout(() => this.toast(message, 'info'), 180 * (index + 1));
+    }
+  }
+
   /** Vrai si les quatre premiers octets sont `8BPS` (PSD ou PSB). */
   private async blobIsPsd(blob: Blob): Promise<boolean> {
     if (blob.size < 4) return false;
@@ -10144,6 +10770,7 @@ export class SuperPhotoEditor {
         this.openTab(doc);
       }
       this.toast(t('msg.psdOpened', { name: doc.name, n: doc.layers.length }), 'success');
+      this.reportDocWarnings(doc);
       return;
     }
     if (!isSupportedMedia({ name, type: blob.type })) {
@@ -10353,6 +10980,21 @@ export class SuperPhotoEditor {
       layer.opacity = item.opacity;
       layer.blend = item.blend;
       layer.visible = item.visible;
+      layer.clipToBelow = item.clipToBelow;
+      // Le masque suit les pixels : sans lui, un PSD posé « dans le plan de
+      // travail » perdrait tout son détourage.
+      if (item.mask) {
+        const mask = createMask(doc.width, doc.height);
+        const maskCtx = canvasContext(mask);
+        // Le masque arrive sur une toile transparente : un fond blanc rendrait
+        // visibles les zones masquées du PSD d'origine.
+        maskCtx.clearRect(0, 0, doc.width, doc.height);
+        maskCtx.imageSmoothingEnabled = true;
+        maskCtx.imageSmoothingQuality = SMOOTHING_QUALITY[this.preferences.quality];
+        maskCtx.drawImage(item.mask, offsetX, offsetY, drawWidth, drawHeight);
+        layer.mask = mask;
+        layer.maskEnabled = item.maskEnabled !== false;
+      }
       created.push(layer);
     }
     if (created.length === 0) return;

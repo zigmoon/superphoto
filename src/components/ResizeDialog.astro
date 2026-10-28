@@ -39,6 +39,18 @@
         <span data-i18n="new.keepRatio">Keep proportions</span>
       </button>
 
+      <div class="resample-block" id="resize-resample-row">
+        <div class="pane-label spaced" data-i18n="resize.resample">Resample</div>
+        <div class="segmented" id="resize-resample" role="group" aria-label="Resample" data-i18n-aria="resize.resample">
+          <button data-resample="1" class="is-active" data-i18n="resize.resampleStandard">Standard</button>
+          <button data-resample="2">×2</button>
+          <button data-resample="4">×4</button>
+        </div>
+        <p class="resample-note" id="resize-resample-note" data-i18n="resize.resampleStandardNote">
+          Bicubic resampling of every layer.
+        </p>
+      </div>
+
       <div class="anchor-block" id="resize-anchor-row">
         <div class="pane-label spaced" data-i18n="resize.anchor">Anchor</div>
         <div class="anchor-grid" role="group" aria-label="Anchor" data-i18n-aria="resize.anchor">

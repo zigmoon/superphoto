@@ -38,6 +38,8 @@ interface PackagedLayer {
   locked?: boolean;
   maskEnabled?: boolean;
   maskEditing?: boolean;
+  /** Masque d'écretage (calque limité à l'alpha de celui du dessous). */
+  clipToBelow?: boolean;
   text?: TextData;
   path?: PathData;
   shape?: ShapeData;
@@ -172,6 +174,7 @@ export async function serializePackage(
         locked: layer.locked,
         maskEnabled: layer.maskEnabled,
         maskEditing: layer.maskEditing,
+        clipToBelow: layer.clipToBelow,
         text: layer.text ? (JSON.parse(JSON.stringify(layer.text)) as TextData) : undefined,
         path: layer.path ? (JSON.parse(JSON.stringify(layer.path)) as PathData) : undefined,
       shape: layer.shape ? (JSON.parse(JSON.stringify(layer.shape)) as ShapeData) : undefined,
@@ -319,6 +322,7 @@ export async function parsePackage(blob: Blob): Promise<OpenedPackage> {
         canvas: await bytesToCanvas(imageBytes, width, height),
         maskEnabled: stored.maskEnabled,
         maskEditing: stored.maskEditing,
+        clipToBelow: stored.clipToBelow,
         text: stored.text,
         path: stored.path,
       shape: stored.shape,

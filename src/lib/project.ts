@@ -26,6 +26,8 @@ interface SpsLayer {
   locked?: boolean;
   maskEnabled?: boolean;
   maskEditing?: boolean;
+  /** Masque d'écretage (calque limité à l'alpha de celui du dessous). */
+  clipToBelow?: boolean;
   text?: TextData;
   path?: PathData;
   shape?: ShapeData;
@@ -67,6 +69,7 @@ export async function serializeProject(doc: PhotoDoc): Promise<Blob> {
       locked: layer.locked,
       maskEnabled: layer.maskEnabled,
       maskEditing: layer.maskEditing,
+      clipToBelow: layer.clipToBelow,
       text: layer.text ? cloneMetadata(layer.text) : undefined,
       path: layer.path ? cloneMetadata(layer.path) : undefined,
       shape: layer.shape ? cloneMetadata(layer.shape) : undefined,
@@ -134,6 +137,7 @@ export async function parseProject(blob: Blob): Promise<PhotoDoc> {
       canvas: await base64ToCanvas(stored.image, width, height),
       maskEnabled: stored.maskEnabled,
       maskEditing: stored.maskEditing,
+      clipToBelow: stored.clipToBelow,
       text: stored.text,
       path: stored.path,
       shape: stored.shape,
