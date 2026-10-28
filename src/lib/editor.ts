@@ -7891,7 +7891,18 @@ export class SuperPhotoEditor {
             // ne coupe l'angle : la sélection reste fidèle au contour.
             for (const step of densify(last, snapped, 3 / this.zoom)) drag.points.push(step);
             drag.points.push(snapped);
-            if (drag.points.length > 4000) drag.points.splice(0, drag.points.length - 4000);
+            // Geste très long : on divise la résolution au lieu de couper le
+            // début du tracé — sinon la boucle s'ouvrirait en plein milieu.
+            if (drag.points.length > 4000) {
+              const reduced: Point[] = [];
+              for (let index = 0; index < drag.points.length; index += 2) {
+                const point = drag.points[index];
+                if (point) reduced.push(point);
+              }
+              const tail = drag.points[drag.points.length - 1];
+              if (tail && reduced[reduced.length - 1] !== tail) reduced.push(tail);
+              drag.points = reduced;
+            }
           }
         } else if (drag.mode === 'lasso') {
           const last = drag.points[drag.points.length - 1];
