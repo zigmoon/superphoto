@@ -97,28 +97,32 @@ export function encodeEps(canvas: HTMLCanvasElement, { title, dpi, flatten }: Ep
     '%%Page: 1 1',
     'gsave',
     'res res scale',
-    // Miroir vertical : l'origine PostScript est en bas à gauche, les pixels
-    // commencent en haut.
-    '0 1 translate',
-    '1 -1 scale',
     '<<',
     '  /ImageType 1',
     '  /Width width',
     '  /Height height',
     '  /BitsPerComponent 8',
     '  /Decode [0 1 0 1 0 1]',
-    '  /ImageMatrix [width 0 0 height 0 0]',
+    // Hauteur négative : l'origine PostScript est en bas à gauche alors que les
+    // pixels arrivent par la première ligne en haut. L'`ImageMatrix` porte donc
+    // le miroir vertical *et* le décalage d'une hauteur — c'est l'idiome du
+    // PostScript Language Reference, et le seul qui garde l'image dans la
+    // BoundingBox (un `1 -1 scale` séparé la décalait d'un point au lieu d'une
+    // hauteur complète).
+    `  /ImageMatrix [${width} 0 0 -${height} 0 ${height}]`,
     '  /DataSource { currentfile picstr readhexstring pop }',
     '>> image',
-    'grestore',
-    'showpage',
-    'end',
-    '%%EOF',
   ].join('\n');
 
-  // Un saut de ligne sépare l'en-tête des données : `readhexstring` ignore les
-  // blancs, inutile d'être plus précis.
-  const body = `${header}\n${hex.join('\n')}\n`;
+  // L'épilogue vient *après* les pixels : `image` lit le fichier au fil de
+  // `readhexstring`, donc tout ce qui suit `image` dans le fichier est avalé
+  // comme des données. Placé avant, il ne serait jamais exécuté (`showpage`
+  // compris) et ses lettres hexadécimales corrompraient l'image.
+  const epilogue = ['grestore', 'showpage', 'end', '%%EOF'].join('\n');
+
+  // Un saut de ligne sépare les pixels de l'épilogue : `readhexstring` s'arrête
+  // après le dernier octet attendu, la suite du fichier est du PostScript.
+  const body = `${header}\n${hex.join('\n')}\n${epilogue}\n`;
   return new Blob([body], { type: EPS_MIME });
 }
 

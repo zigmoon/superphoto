@@ -35,7 +35,7 @@ import {
   type DocGeometrySnapshot,
 } from './document';
 import { History } from './history';
-import { epsFromDocument } from './eps';
+import { EPS_MIME, epsFromDocument } from './eps';
 import { bmpFromCanvas } from './bmp';
 import {
   extensionForMime,
@@ -7004,10 +7004,16 @@ export class SuperPhotoEditor {
       return epsFromDocument(doc, compositeCanvas(doc, '#ffffff'));
     }
     if (format === 'bmp') {
-      return bmpFromCanvas(compositeCanvas(doc, null), doc.background === 'black' ? '#000000' : '#ffffff');
+      return bmpFromCanvas(
+        compositeCanvas(doc, null),
+        doc.background === 'black' ? '#000000' : '#ffffff',
+        doc.dpi,
+      );
     }
+    // PNG, WebP et AVIF transportent l'alpha ; JPEG le remplace par du blanc.
+    const keepsAlpha = format === 'png' || format === 'webp' || format === 'avif';
     const blob = await canvasToBlob(
-      compositeCanvas(doc, format === 'png' ? null : '#ffffff'),
+      compositeCanvas(doc, keepsAlpha ? null : '#ffffff'),
       mime,
       quality,
     );
@@ -10785,6 +10791,11 @@ export class SuperPhotoEditor {
       return;
     }
     if (!isSupportedMedia({ name, type: blob.type })) {
+      // L'EPS est un programme PostScript : on sait l'écrire, pas le relire. Le
+      // dire clairement vaut mieux qu'un « format non pris en charge ».
+      if (/\.(eps|ps)$/i.test(name) || blob.type === EPS_MIME) {
+        throw new Error(t('msg.vectorExportOnly', { name }));
+      }
       throw new Error(t('drop.unsupported', { name }));
     }
     let target: 'current' | 'tab' = placement === 'current' ? 'current' : 'tab';
@@ -10936,6 +10947,11 @@ export class SuperPhotoEditor {
         layers: [layer],
         activeLayerId: layer.id,
       };
+      if (media.sourceColorMode === 'cmyk') {
+        // Sans profil ICC, un CMJN ne peut être qu'approché : mieux vaut le dire
+        // que laisser croire à une conversion fidèle.
+        doc.warnings = [t('msg.cmykConverted')];
+      }
       if (target === 'current') {
         // « Dans le plan de travail » : l'image arrive **sur un nouveau
         // calque** du document ouvert, à sa place au centre. Elle ne remplace
@@ -10944,6 +10960,7 @@ export class SuperPhotoEditor {
       } else {
         this.openTab(doc);
       }
+      this.reportDocWarnings(doc);
       this.closeNewDocumentDialog();
     } finally {
       media.release();

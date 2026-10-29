@@ -278,8 +278,36 @@ function decodeLzw(input: Uint8Array, expected: number): Uint8Array {
 }
 
 /** Prédicteur horizontal (tag 317 = 2), utilisé avec LZW et Deflate. */
-function undoPredictor(data: Uint8Array, width: number, height: number, samples: number): void {
+function undoPredictor(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  samples: number,
+  depth = 1,
+  little = true,
+): void {
   const stride = width * samples;
+  if (depth === 2) {
+    // Prédicteur horizontal en 16 bits : l'addition se fait sur la valeur, pas
+    // sur les octets — d'où deux variantes selon l'ordre des octets.
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const high = little ? 1 : 0;
+    const low = little ? 0 : 1;
+    for (let row = 0; row < height; row += 1) {
+      const start = row * stride;
+      for (let index = samples; index < stride; index += 1) {
+        const position = (start + index) * 2;
+        const previousPosition = position - samples * 2;
+        const value = ((data[position + high] ?? 0) << 8) | (data[position + low] ?? 0);
+        const previous =
+          ((data[previousPosition + high] ?? 0) << 8) | (data[previousPosition + low] ?? 0);
+        const restored = (value + previous) & 0xffff;
+        view.setUint8(position + high, (restored >> 8) & 0xff);
+        view.setUint8(position + low, restored & 0xff);
+      }
+    }
+    return;
+  }
   for (let row = 0; row < height; row += 1) {
     const start = row * stride;
     for (let index = samples; index < stride; index += 1) {
@@ -287,6 +315,47 @@ function undoPredictor(data: Uint8Array, width: number, height: number, samples:
       data[position] = ((data[position] ?? 0) + (data[position - samples] ?? 0)) & 0xff;
     }
   }
+}
+
+/**
+ * Applique le tag 274 « Orientation » : un appareil photo ou un scanner note
+ * dans quel sens il tenait la feuille au moment de la prise de vue, et les
+ * pixels sont stockés dans cet ordre-là. Sans cette rotation, une photo portrait
+ * s'importe couchée.
+ */
+function applyOrientation(source: HTMLCanvasElement, orientation: number): HTMLCanvasElement {
+  if (!(orientation >= 2 && orientation <= 8)) return source;
+  const width = source.width;
+  const height = source.height;
+  // Les orientations 5 à 8 permutent largeur et hauteur.
+  const swap = orientation >= 5;
+  const target = createCanvas(swap ? height : width, swap ? width : height);
+  const ctx = canvasContext(target);
+  switch (orientation) {
+    case 2:
+      ctx.transform(-1, 0, 0, 1, width, 0);
+      break;
+    case 3:
+      ctx.transform(-1, 0, 0, -1, width, height);
+      break;
+    case 4:
+      ctx.transform(1, 0, 0, -1, 0, height);
+      break;
+    case 5:
+      ctx.transform(0, 1, 1, 0, 0, 0);
+      break;
+    case 6:
+      ctx.transform(0, 1, -1, 0, height, 0);
+      break;
+    case 7:
+      ctx.transform(0, -1, -1, 0, height, width);
+      break;
+    default:
+      ctx.transform(0, -1, 1, 0, 0, width);
+      break;
+  }
+  ctx.drawImage(source, 0, 0);
+  return target;
 }
 
 const COMPRESSION_NONE = 1;
@@ -298,6 +367,8 @@ const COMPRESSION_PACKBITS = 32773;
 interface TiffDirectory {
   width: number;
   height: number;
+  /** Tag 274 : 1 = normale, 3 = 180°, 6 = 90° horaire, 8 = 90° antihoraire… */
+  orientation: number;
   bits: number[];
   compression: number;
   photometric: number;
@@ -377,9 +448,14 @@ function readDirectory(
   const entries = readEntries(view, bytes, offset, little);
   const first = (tag: number): number => readValues(view, bytes, entries.get(tag), little)[0] ?? 0;
   const dpiValue = readValues(view, bytes, entries.get(282), little)[0] ?? 0;
+  // Unité de résolution (296) : 2 = pouce, 3 = centimètre. Sans ce tag, la
+  // valeur est un pouce — c'est le cas par défaut de la spécification.
+  const unit = first(296);
+  const dpi = unit === 3 ? dpiValue * 2.54 : dpiValue;
   return {
     width: first(256),
     height: first(257),
+    orientation: first(274),
     bits: readValues(view, bytes, entries.get(258), little),
     compression: first(259) || COMPRESSION_NONE,
     photometric: first(262),
@@ -394,13 +470,15 @@ function readDirectory(
     tileLength: first(323),
     tileOffsets: readValues(view, bytes, entries.get(324), little),
     tileCounts: readValues(view, bytes, entries.get(325), little),
-    dpi: dpiValue >= 1 && dpiValue <= 1200 ? Math.round(dpiValue) : 72,
+    dpi: dpi >= 1 && dpi <= 1200 ? Math.round(dpi) : 72,
   };
 }
 
 export interface ParsedTiff {
   canvas: HTMLCanvasElement;
   dpi: number;
+  /** « cmyk » (ou « gray ») quand le fichier n'est pas RVB : converti sans profil. */
+  colorMode?: 'cmyk' | 'gray';
 }
 
 /**
@@ -493,6 +571,8 @@ export async function parseTiff(bytes: Uint8Array): Promise<ParsedTiff> {
   const bytesPerPixel = Math.max(1, samples * depth);
   const rowBytes = width * bytesPerPixel;
   const raw = new Uint8Array(rowBytes * height);
+  // Espace d'origine : utile pour prévenir que CMJN a été converti sans profil.
+  const sourceColorMode = isCmyk ? ('cmyk' as const) : isGray ? ('gray' as const) : undefined;
 
   const isTiled =
     directory.tileOffsets.length > 0 && directory.tileWidth > 0 && directory.tileLength > 0;
@@ -541,8 +621,9 @@ export async function parseTiff(bytes: Uint8Array): Promise<ParsedTiff> {
     }
     const tables = new Uint8Array(readValues(view, bytes, entries.get(347), little));
     return {
-      canvas: await decodeJpegChunks(bytes, chunks, tables),
+      canvas: applyOrientation(await decodeJpegChunks(bytes, chunks, tables), directory.orientation),
       dpi: directory.dpi,
+      colorMode: sourceColorMode,
     };
   }
 
@@ -569,7 +650,7 @@ export async function parseTiff(bytes: Uint8Array): Promise<ParsedTiff> {
     const decodeWidth = isTiled ? storageWidth : chunk.w;
     const decodeHeight = isTiled ? storageHeight : chunk.h;
     if (directory.predictor === 2) {
-      undoPredictor(decoded, decodeWidth, decodeHeight, samples);
+      undoPredictor(decoded, decodeWidth, decodeHeight, samples, depth, little);
     }
 
     // Recopie dans le tampon du document, ligne par ligne : ni les tuiles ni
@@ -590,8 +671,12 @@ export async function parseTiff(bytes: Uint8Array): Promise<ParsedTiff> {
   const step = depth; // 2 octets par échantillon en 16 bits
   const offsetOf = (index: number, sample: number): number =>
     index * bytesPerPixel + sample * step;
+  // En 16 bits on garde l'octet de poids fort : c'est l'équivalent exact d'une
+  // conversion vers 8 bits, et il n'est pas au même endroit selon l'ordre du
+  // fichier (peu significatif d'abord en petit-boutiste).
+  const highByte = depth === 2 ? (little ? 1 : 0) : 0;
   const sample = (index: number, channel: number): number =>
-    raw[offsetOf(index, channel)] ?? 0;
+    raw[offsetOf(index, channel) + highByte] ?? 0;
 
   for (let index = 0; index < total; index += 1) {
     const target = index * 4;
@@ -615,7 +700,11 @@ export async function parseTiff(bytes: Uint8Array): Promise<ParsedTiff> {
     }
   }
   ctx.putImageData(image, 0, 0);
-  return { canvas, dpi: directory.dpi };
+  return {
+    canvas: applyOrientation(canvas, directory.orientation),
+    dpi: directory.dpi,
+    colorMode: sourceColorMode,
+  };
 }
 
 export function looksLikeTiff(bytes: Uint8Array): boolean {

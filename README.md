@@ -468,10 +468,10 @@ ICC engine. The mode describes the **preview** applied to the pixels:
 | **JPEG** | Flattened on white, quality slider |
 | **WebP** | Transparency, quality slider |
 | **AVIF** | Transparency, quality slider — only offered when the browser can really encode it, never faked with a PNG |
-| **TIFF** | Uncompressed baseline, resolution tag, RGB / RGBA / gray |
-| **BMP** | 24-bit BGR, rows padded to 4 bytes, flattened on the document background |
-| **EPS** | EPSF-3.0, flattened on white, vector-safe hex image data |
-| **PSD** | **Layered** Photoshop file: one RLE layer per layer, masks, opacity, blend modes, DPI |
+| **TIFF** | Uncompressed baseline, resolution tag, RGB / RGBA / gray — 8 bits, as every reader accepts |
+| **BMP** | 24-bit BGR, rows padded to 4 bytes, document resolution in pixels per metre, flattened on the document background |
+| **EPS** | EPSF-3.0, flattened on white, hex image data **followed** by the epilogue, `ImageMatrix` with a negative height so the bitmap lands inside the BoundingBox |
+| **PSD** | **Layered** Photoshop file: one RLE layer per layer, masks (and disabled masks), clipping masks, opacity, blend modes, DPI, plus a valid flattened composite |
 | **`.sps`** | **Everything**: layers, masks, opacity, blend modes, text and paths stay editable |
 | **`.spp`** | The package format: a ZIP with a manifest, per-document JSON and PNG layers |
 
@@ -480,12 +480,31 @@ layers — reopen it in SuperPhoto, or drop it on the window like any image.
 `.spp` and PSD round-trip through other software: the exported PSD opens in
 Photoshop, Affinity Photo and GIMP with its layers intact.
 
+Every exported file is checked against an independent reader (Pillow for the
+raster formats, `psd-tools` for PSD) before a release: dimensions, resolution,
+alpha, layer names, blending modes, opacity, masks, clipping masks and the
+flattened composite. Two details are worth knowing:
+
+- the **layer visibility flag** is written the way Photoshop reads it (bit 1 set
+  means *hidden*, despite what the format documentation says) — a file whose
+  layers all looked inverted was the reason for the fix;
+- the **flattened composite** at the end of a PSD carries a single RLE row table
+  for all four channels. A per-channel table still opened in SuperPhoto (it
+  recomposes the layers) but made the file unreadable elsewhere.
+
+EPS and PS are **export only**: they are PostScript programs, not bitmaps, so
+there is nothing to import. Dropping one explains that instead of failing with a
+generic error.
+
 ### Importing Photoshop files
 
 `Open` (or a drop) accepts **PSD** directly: 8-bit and 16-bit, RGB, CMYK and
-grayscale, every layer with its name, opacity, blend mode, mask and the
-document's DPI (`Image → Image size` shows the real resolution). Layer groups
-are flattened into their parent, as SuperPhoto keeps a flat layer stack.
+grayscale, every layer with its name, opacity, blend mode, mask, clipping mask
+and the document's DPI (`Image → Image size` shows the real resolution). Layer
+groups are flattened into their parent, as SuperPhoto keeps a flat layer stack.
+A clipping mask keeps its base layer and appears indented, exactly like the
+Photoshop panel; the rare layer that is clipped with nothing underneath is
+unclipped and reported, so it cannot silently disappear.
 CMYK documents are converted to the RGB working space on import, using the same
 ink simulation as the colour-mode switch.
 
@@ -497,15 +516,22 @@ of the format for a retoucher, and it now opens:
 - **compression**: none, LZW (with the horizontal predictor), Deflate/ZIP,
   PackBits, and JPEG-in-TIFF with its `JPEGTables` header re-spliced per strip;
 - **layout**: strips *and* tiles, edge tiles read at their padded stride;
-- **depth and spaces**: 8- and 16-bit, RGB, RGBA, grayscale, black-is-zero and
-  CMYK (converted with the same ink arithmetic as the colour-mode switch);
-- **resolution**: the file's DPI is applied to the document.
+- **depth and spaces**: 8- and 16-bit (both byte orders, with the 16-bit
+  predictor undone on the value, not on the bytes), RGB, RGBA, grayscale,
+  black-is-zero and CMYK;
+- **orientation**: tag 274 is applied, so a portrait scan opens upright;
+  orientations 5 to 8 swap width and height;
+- **resolution**: the file's DPI is applied to the document, `ResolutionUnit`
+  3 (centimetres) included.
 
-Verified against files written by libvips/Photoshop: LZW, ZIP, PackBits,
-uncompressed, tiled, 16-bit, grayscale and RGBA all decode **pixel-exact**. The
-one case that is refused instead of approximated is a **JPEG-compressed CMYK
-TIFF**, whose colours depend on the decoder's Adobe convention: SuperPhoto says
-so and asks for RGB or LZW rather than painting inverted colours.
+Verified pixel-exact against files written by Pillow and libvips — LZW, ZIP,
+PackBits, uncompressed, tiled, 8 and 16-bit big and little-endian, grayscale,
+RGBA with alpha, multi-page, CMYK and orientation 6 all match the reference
+reader sample for sample. Two limits are stated rather than approximated: a
+**JPEG-compressed CMYK TIFF** is refused (the colours depend on the decoder's
+Adobe convention), and **CMYK** is converted with the PostScript DeviceCMYK
+formula (`R = 255 − min(255, C + K)`) without an ICC profile — the import says
+so in a toast, because those colours are close, not exact.
 
 Export-side, everything above round-trips: `.sps`, `.spp`, PSD, TIFF, BMP, PNG,
 WebP, JPEG, EPS.

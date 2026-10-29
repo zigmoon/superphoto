@@ -128,7 +128,7 @@ export async function openImages(): Promise<OpenedImage[]> {
           extensions: [
             'png', 'jpg', 'jpeg', 'jpe', 'jfif', 'webp', 'avif', 'gif', 'bmp', 'dib',
             'tif', 'tiff', 'svg', 'svgz', 'ico', 'cur', 'heic', 'heif', 'jxl', 'jp2',
-            'psd', 'psb', 'eps', 'ps',
+            'psd', 'psb',
             'mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv', 'avi', 'sps', 'spp', 'zip',
           ],
         },
@@ -163,30 +163,22 @@ export async function saveExport(
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog');
     const { invoke } = await import('@tauri-apps/api/core');
-    const extension = filename.split('.').pop() ??
-      (mime === 'image/jpeg'
-        ? 'jpg'
-        : mime === 'image/webp'
-          ? 'webp'
-          : mime === SPS_MIME
-            ? 'sps'
-            : mime === SPP_MIME
-              ? SPP_EXTENSION
-              : mime === PSD_MIME
-                ? 'psd'
-                : mime === TIFF_MIME
-                  ? 'tiff'
-                  : mime === EPS_MIME
-                    ? 'eps'
-                    : 'png');
+    // L'extension du nom proposé fait foi ; à défaut on la déduit du type MIME.
+    // `pop()` seul renvoyait le nom entier quand il n'y avait pas de point.
+    const known = extensionForMime(mime);
+    const match = /\.[^./\\]+$/.exec(filename);
+    const extension = match ? match[0].slice(1).toLowerCase() : known;
     const target = await save({
       title: 'Enregistrer depuis SuperPhoto',
       defaultPath: filename,
       filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
     });
     if (!target) return false;
+    // Si le nom choisi n'a plus d'extension, on la remet : un `.png` sans
+    // extension ne s'ouvre plus d'un double-clic.
+    const path = /\.[^./\\]+$/.test(target) ? target : `${target}.${known}`;
     const data = await blobToBase64(blob);
-    await invoke('write_export_file', { path: target, dataBase64: data });
+    await invoke('write_export_file', { path, dataBase64: data });
     return true;
   }
 

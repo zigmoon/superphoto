@@ -329,7 +329,10 @@ function parseLayerRecord(reader: Reader): PsdLayerRecord {
     channels,
     opacity: opacity / 255,
     blend: PSD_TO_BLEND[blendKey.trim()] ?? 'source-over',
-    visible: (flags & 0x02) !== 0,
+    // Le bit 1 est documenté « visible » mais Photoshop l'écrit à 1 pour un
+    // calque *masqué* : c'est un écart connu du format, tous les lecteurs
+    // (psd-tools, libpsd, GIMP) l'interprètent comme « caché ».
+    visible: (flags & 0x02) === 0,
     locked: (flags & 0x01) !== 0,
     clipping,
     maskRect,
@@ -640,8 +643,20 @@ export async function parsePsd(blob: Blob): Promise<PhotoDoc> {
   if (layers.length === 0) throw new Error(t('psd.noLayers'));
   const warnings: string[] = [];
   if (skipped > 0) warnings.push(t('msg.psdSkipped', { n: skipped }));
-  const clipped = layers.filter((layer) => layer.clipToBelow).length;
-  if (clipped > 0) warnings.push(t('msg.psdClipCount', { n: clipped }));
+  // Un calque écrêté sans calque de base en dessous n'a rien à découper :
+  // Photoshop le laisse tel quel. On le signale au lieu de le rendre invisible.
+  let orphans = 0;
+  for (let index = 0; index < layers.length; index += 1) {
+    const layer = layers[index];
+    if (!layer?.clipToBelow) continue;
+    let base = index - 1;
+    while (base >= 0 && layers[base]?.clipToBelow) base -= 1;
+    if (base < 0) {
+      layer.clipToBelow = undefined;
+      orphans += 1;
+    }
+  }
+  if (orphans > 0) warnings.push(t('msg.psdClipOrphan', { n: orphans }));
   // Le PSD empile du bas vers le haut ; c'est déjà l'ordre de `doc.layers`.
   return {
     name: 'Photoshop',
@@ -851,8 +866,9 @@ export async function serializePsd(doc: PhotoDoc, composite: HTMLCanvasElement):
     records.ascii('8BIM').ascii((BLEND_TO_PSD[layer.blend] ?? 'norm').padEnd(4, ' ').slice(0, 4));
     records.u8(Math.round(Math.min(1, Math.max(0, layer.opacity)) * 255));
     records.u8(layer.clipToBelow ? 1 : 0); // masque d'écretage
-    // bit 0 = pixel protégé (verrou), bit 1 = visible.
-    records.u8((layer.visible ? 0x02 : 0) | (layer.locked ? 0x01 : 0));
+    // bit 0 = pixel protégé (verrou), bit 1 = masqué (voir le lecteur),
+    // bit 3 = « Photoshop 5.0 et ultérieur », toujours écrit par Photoshop.
+    records.u8((layer.visible ? 0 : 0x02) | (layer.locked ? 0x01 : 0) | 0x08);
     records.u8(0);
 
     // Données supplémentaires : masque, plages de fusion, nom, nom Unicode.
@@ -907,13 +923,18 @@ export async function serializePsd(doc: PhotoDoc, composite: HTMLCanvasElement):
   writer.u32(layerAndMask.size).bytes(layerAndMask.toUint8Array());
 
   // ── Image fusionnée ──────────────────────────────────────────────────────
+  // Le bloc final a *une seule* marque de compression, suivie de la table des
+  // longueurs de **toutes** les lignes de **tous** les canaux (R × V × canaux),
+  // puis des données. Répéter `u16(1)` devant chaque canal — comme pour les
+  // canaux d'un calque — rend le fichier illisible pour Photoshop comme pour
+  // psd-tools : ils lisent une table de 320 entrées là où on n'en écrit que 80.
   const flat = planarChannels(imageDataOf(composite));
-  for (const plane of [flat.r, flat.g, flat.b, flat.a]) {
-    const { table, data } = rleRows(plane, width, height);
-    writer.u16(1);
-    for (const count of table) writer.u16(count);
-    writer.bytes(data);
+  const merged = [flat.r, flat.g, flat.b, flat.a].map((plane) => rleRows(plane, width, height));
+  writer.u16(1); // RLE
+  for (const channel of merged) {
+    for (const count of channel.table) writer.u16(count);
   }
+  for (const channel of merged) writer.bytes(channel.data);
 
   return writer.toBlob(PSD_MIME);
 }

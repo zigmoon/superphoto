@@ -17,7 +17,11 @@ const INFO_HEADER = 40;
  * Chaque ligne BMP est alignée sur 4 octets. Sans ce remplissage, l'image
  * s'affiche en escalier sur les largeurs non multiples de 4.
  */
-export function bmpFromCanvas(source: HTMLCanvasElement, background = '#ffffff'): Blob {
+export function bmpFromCanvas(
+  source: HTMLCanvasElement,
+  background = '#ffffff',
+  dpi = 72,
+): Blob {
   const width = source.width;
   const height = source.height;
   // BMP 24 bits n'a pas d'alpha : on aplatit d'abord sur le fond demandé.
@@ -45,8 +49,10 @@ export function bmpFromCanvas(source: HTMLCanvasElement, background = '#ffffff')
   writer.u16(24, true); // bits par pixel
   writer.u32(0, true); // BI_RGB, non compressé
   writer.u32(pixelBytes, true);
-  writer.i32(2835, true); // 72 dpi en pixels/mètre
-  writer.i32(2835, true);
+  // BMP stocke la résolution en pixels par mètre, pas en pouces.
+  const pixelsPerMeter = Math.round(Math.min(1200, Math.max(1, dpi)) * 39.3701);
+  writer.i32(pixelsPerMeter, true);
+  writer.i32(pixelsPerMeter, true);
   writer.u32(0, true);
   writer.u32(0, true);
 

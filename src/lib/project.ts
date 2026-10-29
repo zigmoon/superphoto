@@ -10,6 +10,7 @@
  * serveur FTP sert le fichier en `application/octet-stream`.
  */
 import type { BlendMode, ColorMode, Layer, LayerKind, PathData, PhotoDoc, ShapeData, TextData } from './types';
+import { t } from './i18n';
 import { base64ToBlob, blobToBase64, canvasContext, canvasToBlob, createCanvas } from './utils';
 
 export const SPS_MIME = 'application/x-superphoto';
@@ -113,13 +114,13 @@ export async function parseProject(blob: Blob): Promise<PhotoDoc> {
   try {
     raw = JSON.parse(await blob.text()) as SpsFile;
   } catch {
-    throw new Error('Ce fichier n’est pas un projet SuperPhoto.');
+    throw new Error(t('sps.notProject'));
   }
   if (!raw || raw.format !== 'superphoto' || !Array.isArray(raw.layers)) {
-    throw new Error('Ce fichier n’est pas un projet SuperPhoto.');
+    throw new Error(t('sps.notProject'));
   }
   if (raw.version > SPS_VERSION) {
-    throw new Error('Ce projet a été enregistré par une version plus récente de SuperPhoto.');
+    throw new Error(t('sps.tooRecent'));
   }
   const width = Math.max(1, Math.round(Number(raw.width) || 1));
   const height = Math.max(1, Math.round(Number(raw.height) || 1));
@@ -145,7 +146,7 @@ export async function parseProject(blob: Blob): Promise<PhotoDoc> {
     if (stored.mask) layer.mask = await base64ToCanvas(stored.mask, width, height);
     layers.push(layer);
   }
-  if (layers.length === 0) throw new Error('Ce projet ne contient aucun calque.');
+  if (layers.length === 0) throw new Error(t('sps.empty'));
   return {
     name: raw.name || 'Projet',
     width,

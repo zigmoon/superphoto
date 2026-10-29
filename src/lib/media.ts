@@ -51,6 +51,12 @@ export interface DecodedMedia {
   height: number;
   /** Résolution déclarée par le fichier, quand il en porte une. */
   dpi?: number;
+  /**
+   * Espace colorimétrique d'origine quand il n'est pas RVB : l'image est rendue
+   * en RVB, mais l'appelant peut prévenir que la conversion s'est faite sans
+   * profil ICC.
+   */
+  sourceColorMode?: 'cmyk' | 'gray';
   /** Dessine le média dans un contexte 2D, à la taille demandée. */
   draw: (ctx: CanvasRenderingContext2D, width: number, height: number) => void;
   /** Libère les ressources (Bitmap, ImageBitmap, URL temporaire…). */
@@ -143,11 +149,12 @@ async function decodeVideo(blob: Blob): Promise<DecodedMedia> {
  */
 async function decodeTiffBlob(blob: Blob): Promise<DecodedMedia> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  const { canvas, dpi } = await parseTiff(bytes);
+  const { canvas, dpi, colorMode } = await parseTiff(bytes);
   return {
     width: canvas.width,
     height: canvas.height,
     dpi,
+    sourceColorMode: colorMode,
     draw: (ctx, width, height) => ctx.drawImage(canvas, 0, 0, width, height),
     release: () => {},
   };

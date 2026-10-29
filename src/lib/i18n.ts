@@ -865,6 +865,26 @@ const D: Record<string, [string, string, string]> = {
   'pkg.empty': ['This package contains no readable document.', 'Ce paquet ne contient aucun document lisible.', 'このパッケージには読めるドキュメントがありません。'],
   'pkg.noDocument': ['Nothing to save.', 'Rien à enregistrer.', '保存するものがありません。'],
 
+  // ── Projet `.sps` : ouverture et erreurs ────────────────────────────────
+  'sps.notProject': [
+    'This file is not a SuperPhoto project.',
+    'Ce fichier n’est pas un projet SuperPhoto.',
+    'このファイルは SuperPhoto プロジェクトではありません。',
+  ],
+  'sps.tooRecent': [
+    'This project was saved by a newer version of SuperPhoto.',
+    'Ce projet a été enregistré par une version plus récente de SuperPhoto.',
+    'このプロジェクトは新しいバージョンの SuperPhoto で保存されています。',
+  ],
+  'sps.empty': ['This project contains no readable layer.', 'Ce projet ne contient aucun calque lisible.', 'このプロジェクトには読めるレイヤーがありません。'],
+
+  // ── Formats exportables mais non importables ────────────────────────────
+  'msg.vectorExportOnly': [
+    '{name}: EPS/PS files can only be written by SuperPhoto. Open a PSD, TIFF or PNG instead.',
+    '{name} : les fichiers EPS/PS ne peuvent qu’être écrits par SuperPhoto. Ouvrez plutôt un PSD, un TIFF ou un PNG.',
+    '{name}: EPS/PS ファイルは書き出し専用です。PSD・TIFF・PNG を開いてください。',
+  ],
+
   // ── Où ouvrir un média ──────────────────────────────────────────────────
   'place.title': ['Where should it open?', 'Où ouvrir ce média ?', 'どこに開きますか？'],
   'place.subtitle': ['“{name}” can be added to the current workspace or open in its own tab.', '« {name} » peut être ajouté au plan de travail ou s’ouvrir dans son propre onglet.', '「{name}」は現在のワークスペースに追加するか、新しいタブで開けます。'],
@@ -1037,10 +1057,15 @@ const D: Record<string, [string, string, string]> = {
     '{n} calque(s) n’ont pas pu être lus (objets dynamiques, groupes ou calques vides) et ont été écartés.',
     '{n} レイヤーは読み取れず（スマートオブジェクト、グループ、空のレイヤー）、除外されました。',
   ],
-  'msg.psdClipCount': [
-    '{n} clipping mask(s) restored.',
-    '{n} masque(s) d’écretage restauré(s).',
-    '{n} 個のクリッピングマスクを復元しました。',
+  'msg.psdClipOrphan': [
+    '{n} clipping mask(s) had no layer underneath: they were unclipped so they stay visible.',
+    '{n} masque(s) d’écretage n’avaient pas de calque en dessous : ils ont été désactivés pour rester visibles.',
+    '{n} 個のクリッピングマスクに下のレイヤーがなく、表示を保つため解除しました。',
+  ],
+  'msg.cmykConverted': [
+    'CMYK image converted to RGB without an ICC profile: colours are approximate.',
+    'Image CMJN convertie en RVB sans profil ICC : les couleurs sont approximatives.',
+    'CMYK 画像を ICC プロファイルなしで RGB に変換しました。色は近似値です。',
   ],
 
   // ── Import PSD ──────────────────────────────────────────────────────────
